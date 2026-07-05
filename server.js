@@ -786,44 +786,6 @@ app.delete('/api/personnel/:id', authenticate, requireClearance(900), async (req
     }
 });
 
-app.post("/api/admin/reset-password", authenticateToken, async (req, res) => {
-    try {
-        if (req.user.clearance_level !== "admin") {
-            return res.status(403).json({ error: "Unauthorized" });
-        }
-
-        const { callsign, newPassword } = req.body;
-
-        if (!callsign || !newPassword) {
-            return res.status(400).json({ error: "Missing callsign or new password" });
-        }
-
-        const hash = await bcrypt.hash(newPassword, 10);
-
-        const result = await pool.query(
-            "UPDATE imperial_personnel SET password_hash = $1 WHERE callsign = $2 RETURNING callsign",
-            [hash, callsign]
-        );
-
-        if (result.rowCount === 0) {
-            return res.status(404).json({ error: "User not found" });
-        }
-
-        await logAction(
-            "PASSWORD_RESET",
-            req.user.callsign,
-            `Reset password for ${callsign}`
-        );
-
-        res.json({
-            success: true,
-            message: `Password reset for ${callsign}`
-        });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Internal server error" });
-    }
-});
 
 // ============================================================
 // LOGS
