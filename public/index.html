@@ -19,10 +19,10 @@
             
             <div class="login-form">
                 <label for="loginCallsign">⚜ Callsign</label>
-                <input type="text" id="loginCallsign" placeholder="Enter your callsign" value="Inquisitor_Gideon">
+                <input type="text" id="loginCallsign" placeholder="Enter your callsign" value="God_Emperor">
                 
                 <label for="loginPassword">⚜ Access Code</label>
-                <input type="password" id="loginPassword" placeholder="Enter password" value="admin123">
+                <input type="password" id="loginPassword" placeholder="Enter password" value="Ksusa">
                 
                 <div id="loginError" class="login-error"></div>
                 
@@ -102,7 +102,7 @@
             <div class="toolbar">
                 <button class="btn-primary" onclick="openSubjectModal()">➕ New Subject</button>
                 <div class="toolbar-search">
-                    <input type="text" placeholder="Search subjects..." id="subjectSearch" onkeyup="filterSubjects()">
+                    <input type="text" placeholder="Search subjects..." id="subjectSearch" onkeyup="filterTable('subjectSearch','subjectsTableBody')">
                 </div>
             </div>
             <div class="table-container">
@@ -130,6 +130,9 @@
         <div class="tab-content" id="tab-cases">
             <div class="toolbar">
                 <button class="btn-primary" onclick="openCaseModal()">➕ New Case</button>
+                <div class="toolbar-search">
+                    <input type="text" placeholder="Search cases..." id="caseSearch" onkeyup="filterTable('caseSearch','casesTableBody')">
+                </div>
             </div>
             <div class="table-container">
                 <table>
@@ -161,6 +164,9 @@
                 <select id="reportCaseFilter" onchange="loadReports()" style="background:var(--terminal-dark);color:var(--terminal-green);border:1px solid var(--terminal-border);padding:8px;">
                     <option value="">All Cases</option>
                 </select>
+                <div class="toolbar-search">
+                    <input type="text" placeholder="Search reports..." id="reportSearch" onkeyup="filterTable('reportSearch','reportsTableBody')">
+                </div>
             </div>
             <div class="table-container">
                 <table>
@@ -187,6 +193,9 @@
         <div class="tab-content" id="tab-evidence">
             <div class="toolbar">
                 <button class="btn-primary" onclick="openEvidenceModal()">➕ Upload Evidence</button>
+                <div class="toolbar-search">
+                    <input type="text" placeholder="Search evidence..." id="evidenceSearch" onkeyup="filterTable('evidenceSearch','evidenceTableBody')">
+                </div>
             </div>
             <div class="table-container">
                 <table>
@@ -213,6 +222,9 @@
         <div class="tab-content" id="tab-entities">
             <div class="toolbar">
                 <button class="btn-primary" onclick="openEntityModal()">➕ New Entity</button>
+                <div class="toolbar-search">
+                    <input type="text" placeholder="Search entities..." id="entitySearch" onkeyup="filterTable('entitySearch','entitiesTableBody')">
+                </div>
             </div>
             <div class="table-container">
                 <table>
@@ -241,6 +253,9 @@
         <div class="tab-content" id="tab-personnel">
             <div class="toolbar">
                 <button class="btn-primary" onclick="openPersonnelModal()">➕ New Personnel</button>
+                <div class="toolbar-search">
+                    <input type="text" placeholder="Search personnel..." id="personnelSearch" onkeyup="filterTable('personnelSearch','personnelTableBody')">
+                </div>
             </div>
             <div class="table-container">
                 <table>
