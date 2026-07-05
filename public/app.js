@@ -860,21 +860,23 @@ async function loadPersonnel() {
         }
 
         tbody.innerHTML = personnelList.map(p => `
-            <tr class="clickable-row" onclick="viewPersonnel(${Number(p.id)})">
-                <td>${escapeHtml(p.id ?? '-')}</td>
-                <td><strong>${escapeHtml(p.callsign || 'Unknown')}</strong></td>
-                <td>${escapeHtml(p.rank || '-')}</td>
-                <td>Level ${escapeHtml(p.clearance_level || 1)}</td>
-                <td>${escapeHtml(p.department || '-')}</td>
-                <td><span class="status-badge ${escapeHtml(p.status || 'active')}">${escapeHtml(p.status || 'active')}</span></td>
-                <td>${p.created_at ? escapeHtml(new Date(p.created_at).toLocaleDateString()) : '-'}</td>
-                <td onclick="event.stopPropagation()">
-    <button class="btn-edit" onclick="editPersonnel(${Number(p.id)})">✎</button>
-    <button class="btn-edit" onclick="togglePersonnelStatus(${Number(p.id)})">⚡</button>
-    <button class="btn-danger" onclick="deletePersonnel(${Number(p.id)})">✕</button>
-</td>
-            </tr>
-        `).join('');
+    <tr class="clickable-row" onclick="viewPersonnel(${Number(p.id)})">
+        <td>${escapeHtml(p.id ?? '-')}</td>
+        <td><strong>${escapeHtml(p.callsign || 'Unknown')}</strong></td>
+        <td>${escapeHtml(p.rank || '-')}</td>
+        <td>Level ${escapeHtml(p.clearance_level || 1)}</td>
+        <td>${escapeHtml(p.department || '-')}</td>
+        <td><span class="status-badge ${escapeHtml(p.status || 'active')}">${escapeHtml(p.status || 'active')}</span></td>
+        <td>${p.created_at ? escapeHtml(new Date(p.created_at).toLocaleDateString()) : '-'}</td>
+        <td onclick="event.stopPropagation()">
+            ${p.clearance_level < currentUser.clearance_level ? `
+                <button class="btn-edit" onclick="editPersonnel(${Number(p.id)})">✎</button>
+                <button class="btn-edit" onclick="togglePersonnelStatus(${Number(p.id)})">⚡</button>
+                <button class="btn-danger" onclick="deletePersonnel(${Number(p.id)})">✕</button>
+            ` : '<span style="color:var(--terminal-muted); font-size:10px;">🔒 Locked</span>'}
+        </td>
+    </tr>
+`).join('');
     } catch (error) {
         document.getElementById('personnelTableBody').innerHTML =
             '<tr><td colspan="8" class="loading-text">⛔ Insufficient clearance</td></tr>';
@@ -901,6 +903,9 @@ function editPersonnel(id) {
 
 function openPersonnelModal(data = null) {
     const isEdit = data !== null;
+    const myClearance = currentUser.clearance_level;
+    const maxSelectable = myClearance - 1; // can't grant equal or higher
+
     document.getElementById('modalTitle').textContent = isEdit ? '✎ Edit Personnel' : '👤 Create New Personnel';
     document.getElementById('modalBody').innerHTML = `
         <form id="personnelForm" onsubmit="savePersonnel(event, ${isEdit ? Number(data.id) : 'null'})">
@@ -920,9 +925,9 @@ function openPersonnelModal(data = null) {
                     <input type="text" id="personnelRank" placeholder="e.g. Inquisitor_Lord" value="${isEdit ? escapeHtml(data.rank || '') : ''}">
                 </div>
                 <div class="form-group">
-                    <label>Clearance Level</label>
+                    <label>Clearance Level (max grantable: ${maxSelectable})</label>
                     <select id="personnelClearance">
-                        ${[1,2,3,4,5,6,7,8,9,10].map(l =>
+                        ${Array.from({length: Math.max(maxSelectable, 1)}, (_, i) => i + 1).map(l =>
                             `<option value="${l}" ${isEdit && data.clearance_level === l ? 'selected' : ''}>Level ${l}</option>`
                         ).join('')}
                     </select>

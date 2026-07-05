@@ -214,6 +214,10 @@ function requireClearance(minLevel) {
     };
 }
 
+function requireHigherClearance(targetClearance, actorClearance) {
+    return actorClearance > targetClearance;
+}
+
 function buildUserResponse(person) {
     return {
         id: person.id,
@@ -740,15 +744,20 @@ app.post('/api/personnel', authenticate, requireClearance(900), async (req, res)
             return res.status(409).json({ error: 'That callsign is already in use' });
         }
         
-        const finalClearance = Math.min(Math.max(parseInt(clearance_level) || 1, 1), 10);
+        const requestedClearance = Math.min(Math.max(parseInt(clearance_level) || 1, 1), 10);
+
+        if (requestedClearance >= req.user.clearance_level) {
+            return res.status(403).json({ error: `You cannot grant a clearance level equal to or higher than your own (${req.user.clearance_level})` });
+        }
+
         const password_hash = await bcrypt.hash(password, 10);
 
         const result = await pool.query(
             'INSERT INTO imperial_personnel (callsign, password_hash, rank, clearance_level, department, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, callsign, rank, clearance_level, department, status, created_at',
-            [callsign, password_hash, rank || 'Inquisitor', finalClearance, department || 'Unknown', 'active', new Date().toISOString()]
+            [callsign, password_hash, rank || 'Inquisitor', requestedClearance, department || 'Unknown', 'active', new Date().toISOString()]
         );
         
-        await logAction('CREATE_PERSONNEL', req.user.callsign, `Callsign: ${callsign} | Clearance: ${finalClearance}`);
+        await logAction('CREATE_PERSONNEL', req.user.callsign, `Callsign: ${callsign} | Clearance: ${requestedClearance}`);
         res.status(201).json(result.rows[0]);
     } catch (err) {
         return res.status(500).json({ error: err.message });
@@ -760,18 +769,28 @@ app.put('/api/personnel/:id', authenticate, requireClearance(900), async (req, r
     const { rank, department, clearance_level } = req.body;
 
     try {
-        const finalClearance = Math.min(Math.max(parseInt(clearance_level) || 1, 1), 10);
+        const targetResult = await pool.query('SELECT clearance_level FROM imperial_personnel WHERE id = $1', [id]);
+        if (targetResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Personnel not found' });
+        }
+        const targetClearance = targetResult.rows[0].clearance_level;
+
+        if (targetClearance >= req.user.clearance_level) {
+            return res.status(403).json({ error: 'You cannot edit personnel with equal or higher clearance than your own' });
+        }
+
+        const requestedClearance = Math.min(Math.max(parseInt(clearance_level) || 1, 1), 10);
+
+        if (requestedClearance >= req.user.clearance_level) {
+            return res.status(403).json({ error: `You cannot grant a clearance level equal to or higher than your own (${req.user.clearance_level})` });
+        }
 
         const result = await pool.query(
             'UPDATE imperial_personnel SET rank = $1, department = $2, clearance_level = $3 WHERE id = $4 RETURNING id, callsign, rank, clearance_level, department, status, created_at',
-            [rank, department, finalClearance, id]
+            [rank, department, requestedClearance, id]
         );
 
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Personnel not found' });
-        }
-
-        await logAction('UPDATE_PERSONNEL', req.user.callsign, `ID: ${id} | Clearance: ${finalClearance}`);
+        await logAction('UPDATE_PERSONNEL', req.user.callsign, `ID: ${id} | Clearance: ${requestedClearance}`);
         res.json(result.rows[0]);
     } catch (err) {
         return res.status(500).json({ error: err.message });
@@ -780,16 +799,20 @@ app.put('/api/personnel/:id', authenticate, requireClearance(900), async (req, r
 
 app.put('/api/personnel/:id/toggle', authenticate, requireClearance(900), async (req, res) => {
     const id = req.params.id;
-
+    
     try {
-        const personResult = await pool.query('SELECT status FROM imperial_personnel WHERE id = $1', [id]);
+        const personResult = await pool.query('SELECT status, clearance_level FROM imperial_personnel WHERE id = $1', [id]);
         if (personResult.rows.length === 0) {
             return res.status(404).json({ error: 'Personnel not found' });
         }
 
+        if (personResult.rows[0].clearance_level >= req.user.clearance_level) {
+            return res.status(403).json({ error: 'You cannot modify personnel with equal or higher clearance than your own' });
+        }
+        
         const newStatus = personResult.rows[0].status === 'active' ? 'inactive' : 'active';
         await pool.query('UPDATE imperial_personnel SET status = $1 WHERE id = $2', [newStatus, id]);
-
+        
         await logAction('TOGGLE_PERSONNEL', req.user.callsign, `ID: ${id} | Status: ${newStatus}`);
         res.json({ id: parseInt(id), status: newStatus });
     } catch (err) {
@@ -799,16 +822,22 @@ app.put('/api/personnel/:id/toggle', authenticate, requireClearance(900), async 
 
 app.delete('/api/personnel/:id', authenticate, requireClearance(900), async (req, res) => {
     const id = req.params.id;
-
+    
     if (id === '1' || parseInt(id) === 1) {
         return res.status(403).json({ error: 'Cannot delete the God_Emperor account' });
     }
-
+    
     try {
-        const result = await pool.query('DELETE FROM imperial_personnel WHERE id = $1 RETURNING id', [id]);
-        if (result.rows.length === 0) {
+        const personResult = await pool.query('SELECT clearance_level FROM imperial_personnel WHERE id = $1', [id]);
+        if (personResult.rows.length === 0) {
             return res.status(404).json({ error: 'Personnel not found' });
         }
+
+        if (personResult.rows[0].clearance_level >= req.user.clearance_level) {
+            return res.status(403).json({ error: 'You cannot delete personnel with equal or higher clearance than your own' });
+        }
+
+        const result = await pool.query('DELETE FROM imperial_personnel WHERE id = $1 RETURNING id', [id]);
         await logAction('DELETE_PERSONNEL', req.user.callsign, `ID: ${id}`);
         res.json({ message: `Personnel ${id} purged` });
     } catch (err) {
