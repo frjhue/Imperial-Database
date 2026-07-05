@@ -1,21 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Imperial Dashboard</title>
+</head>
 
-<p id="user"><p>
+<body style="margin:0;background:black;color:lime;font-family:monospace;">
 
- <script>
- async function loadUser() {
-  const res = await fetch(http://192.168.1.15:3000/dashboard", {
-   credentials: "include"
+<div style="display:flex;height:100vh;">
+
+  <!-- SIDEBAR -->
+  <div style="width:220px;background:#111;padding:10px;">
+    <h3>IMPERIUM</h3>
+
+    <button onclick="show('users')">Users</button><br><br>
+    <button onclick="show('cases')">Cases</button><br><br>
+    <button onclick="show('entities')">Entities</button><br><br>
+    <button onclick="show('logs')">Logs</button><br><br>
+
+    <hr>
+
+    <button onclick="logout()">Logout</button>
+  </div>
+
+  <!-- MAIN CONTENT -->
+  <div style="flex:1;padding:20px;" id="main">
+    <h1>Welcome, Agent</h1>
+    <p>Select a module from the left.</p>
+  </div>
+
+</div>
+
+<script>
+async function show(section) {
+  const main = document.getElementById("main");
+
+  if (section === "users") {
+    const res = await fetch("http://192.168.1.15:3000/admin/users", {
+      credentials: "include"
+    });
+
+    const data = await res.text();
+    main.innerHTML = "<h2>Users</h2><pre>" + data + "</pre>";
+  }
+
+  if (section === "cases") {
+  const res = await fetch("http://192.168.1.15:3000/cases", {
+    credentials: "include"
   });
-  
-  if (!res.ok) {
-   document.body.innerHTML = "ACCESS DENIED";
-   return;
-  )
 
-  document.getElementById("user").innerText = "Weclome, Agent";
+  const data = await res.json();
+
+  let html = "<h2>Cases</h2>";
+
+  html += `
+    <h3>Create Case</h3>
+    <input id="d" placeholder="Designation"><br><br>
+    <input id="t" placeholder="Threat Level"><br><br>
+    <input id="s" placeholder="Summary"><br><br>
+    <button onclick="createCase()">Create</button>
+    <hr>
+  `;
+
+html += "<h3>Existing Cases</h3>";
+
+data.forEach(c => {
+  html += `
+    <div style="border:1px solid lime;padding:5px;margin:5px;">
+      <b>${c.designation}</b><br>
+      Threat: ${c.threat_level}<br>
+      <a href="http://192.168.1.15:3000/case.html?id=${c.id}" style="color:cyan;">
+        Open Case
+      </a>
+    </div>
+  `;
+});
+  main.innerHTML = html;
 }
 
-loaduser()
+  if (section === "entities") {
+    main.innerHTML = "<h2>Entities</h2><p>Not built yet</p>";
+  }
+
+  if (section === "logs") {
+    main.innerHTML = "<h2>Logs</h2><p>Not built yet</p>";
+  }
+}
+
+async function logout() {
+  await fetch("http://192.168.1.15:3000/logout", {
+    credentials: "include"
+  });
+
+  window.location.href = "http://192.168.1.15:3000";
+}
+async function createCase() {
+  const designation = document.getElementById("d").value;
+  const threat_level = document.getElementById("t").value;
+  const summary = document.getElementById("s").value;
+
+  await fetch("http://192.168.1.15:3000/cases/create", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ designation, threat_level, summary })
+  });
+
+  alert("Case created");
+  location.reload();
+}
 </script>
+
 </body>
 </html>

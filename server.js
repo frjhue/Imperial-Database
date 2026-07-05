@@ -76,6 +76,23 @@ app.get("/dashboard", (req, res) => {
  res.sendFile(__dirname + "/frontend/dashboard.html");
 });
 
+app.get("/admin/users", async (req, res) => {
+  if (!req.session.user || req.session.user.clearance < 10) {
+    return res.status(403).send("ACCESS DENIED");
+  }
+
+  const result = await pool.query(
+    "SELECT id, callsign, clearance_level, rank FROM imperial_personnel"
+  );
+
+  res.json(result.rows);
+});
+
+app.get("/logout", (req, res) => {
+  req.session.destroy();
+  res.send("Logged out");
+});
+
 app.post("/register", async (req, res) => {
  const { callsign, password } = req.body;
 
@@ -94,6 +111,70 @@ app.post("/register", async (req, res) => {
  }
 });
 
+app.post("/cases/create", async (req, res) => {
+  if (!req.session.user) {
+    return res.status(403).send("ACCESS DENIED");
+  }
+
+  const { designation, threat_level, summary } = req.body;
+
+  try {
+    const result = await pool.query(
+      "INSERT INTO imperial_casefiles (designation, threat_level, summary, assigned_officer) VALUES ($1, $2, $3, $4) RETURNING *",
+      [designation, threat_level, summary, req.session.user.id]
+    );
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.log(err);
+    res.status(500).send("Error creating case");
+  }
+});
+
+app.get("/cases", async (req, res) => {
+  if (!req.session.user) {
+    return res.status(403).send("ACCESS DENIED");
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT c.*, p.callsign 
+       FROM imperial_casefiles c
+       LEFT JOIN imperial_personnel p ON c.assigned_officer = p.id
+       ORDER BY c.id DESC`
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.log(err);
+    res.status(500).send("Error fetching cases");
+  }
+});
+
+app.get("/cases/:id", async (req, res) => {
+  if (!req.session.user) {
+    return res.status(403).send("ACCESS DENIED");
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT c.*, p.callsign 
+       FROM imperial_casefiles c
+       LEFT JOIN imperial_personnel p ON c.assigned_officer = p.id
+       WHERE c.id = $1`,
+      [req.params.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).send("Case not found");
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.log(err);
+    res.status(500).send("Error fetching case");
+  }
+});
 
 app.listen(3000, "0.0.0.0", () => {
  console.log("Imperial server running on port 3000");
