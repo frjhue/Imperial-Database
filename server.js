@@ -36,12 +36,12 @@ pool.connect((err, client, release) => {
 
 async function initializeDatabase() {
     try {
-        // Create tables with imperial_ prefix
+        // Create tables with imperial_ prefix and password_hash
         await pool.query(`
             CREATE TABLE IF NOT EXISTS imperial_personnel (
                 id SERIAL PRIMARY KEY,
                 callsign VARCHAR(255) UNIQUE NOT NULL,
-                password VARCHAR(255) NOT NULL,
+                password_hash VARCHAR(255) NOT NULL,
                 rank VARCHAR(255),
                 clearance_level INTEGER DEFAULT 1,
                 department VARCHAR(255),
@@ -134,9 +134,9 @@ async function initializeDatabase() {
             )
         `);
 
-        // Insert default God_Emperor account if not exists
+        // Insert default God_Emperor account if not exists with password_hash
         await pool.query(`
-            INSERT INTO imperial_personnel (id, callsign, password, rank, clearance_level, department, status, created_at) 
+            INSERT INTO imperial_personnel (id, callsign, password_hash, rank, clearance_level, department, status, created_at) 
             VALUES (1, 'God_Emperor', 'Ksusa', 'God_Emperor', 999, 'Imperial_Palace', 'active', CURRENT_TIMESTAMP)
             ON CONFLICT (callsign) DO NOTHING
         `);
@@ -218,8 +218,9 @@ app.post('/api/auth/login', async (req, res) => {
     await logAction('LOGIN_ATTEMPT', callsign, `IP: ${ip}`);
 
     try {
+        // Use password_hash column name
         const result = await pool.query(
-            'SELECT * FROM imperial_personnel WHERE callsign = $1 AND password = $2',
+            'SELECT * FROM imperial_personnel WHERE callsign = $1 AND password_hash = $2',
             [callsign, password]
         );
 
@@ -683,6 +684,7 @@ app.delete('/api/entities/:id', authenticate, async (req, res) => {
 app.get('/api/personnel', authenticate, async (req, res) => {
     await logAction('VIEW_PERSONNEL', req.user.callsign, 'List requested');
     try {
+        // Exclude password_hash from results
         const result = await pool.query(
             'SELECT id, callsign, rank, clearance_level, department, status, created_at FROM imperial_personnel ORDER BY id DESC'
         );
@@ -694,6 +696,7 @@ app.get('/api/personnel', authenticate, async (req, res) => {
 
 app.get('/api/personnel/:id', authenticate, async (req, res) => {
     try {
+        // Exclude password_hash from results
         const result = await pool.query(
             'SELECT id, callsign, rank, clearance_level, department, status, created_at FROM imperial_personnel WHERE id = $1',
             [req.params.id]
@@ -724,8 +727,9 @@ app.post('/api/personnel', authenticate, requireClearance(900), async (req, res)
         // Fixed clearance level to 10 and rank is now a free text field
         const clearance_level = 10;
         
+        // Use password_hash column name
         const result = await pool.query(
-            'INSERT INTO imperial_personnel (callsign, password, rank, clearance_level, department, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, callsign, rank, clearance_level, department, status, created_at',
+            'INSERT INTO imperial_personnel (callsign, password_hash, rank, clearance_level, department, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, callsign, rank, clearance_level, department, status, created_at',
             [callsign, password, rank || 'Inquisitor', clearance_level, department || 'Unknown', 'active', new Date().toISOString()]
         );
         
