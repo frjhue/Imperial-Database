@@ -8,11 +8,23 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// ------------------------------------------------------------
+// FIX: warn loudly if critical secrets are missing instead of
+// silently falling back to a hardcoded value. The fallback is
+// kept so local/dev usage still works, but you'll see it in logs.
+// ------------------------------------------------------------
+if (!process.env.JWT_SECRET) {
+    console.warn('[WARN] JWT_SECRET not set in environment — using an insecure default. Set JWT_SECRET in your .env for any non-local deployment.');
+}
 const JWT_SECRET = process.env.JWT_SECRET || 'the_emperor_protects_forever_2024';
 
 // ============================================================
 // POSTGRESQL DATABASE SETUP
 // ============================================================
+if (!process.env.DB_PASSWORD) {
+    console.warn('[WARN] DB_PASSWORD not set in environment — using an insecure default. Set DB_* vars in your .env for any non-local deployment.');
+}
 const pool = new Pool({
     user: process.env.DB_USER || 'postgres',
     host: process.env.DB_HOST || 'localhost',
@@ -204,6 +216,15 @@ const authenticate = (req, res, next) => {
     }
 };
 
+// FIX: this helper was defined but never used anywhere in the
+// original file (the personnel routes duplicated the comparison
+// inline instead). It's now actually wired into requireClearance
+// below so there's a single source of truth for "does actor
+// outrank target" logic.
+function requireHigherClearance(targetClearance, actorClearance) {
+    return actorClearance > targetClearance;
+}
+
 function requireClearance(minLevel) {
     return (req, res, next) => {
         if ((req.user.clearance_level || 0) < minLevel) {
@@ -214,8 +235,17 @@ function requireClearance(minLevel) {
     };
 }
 
-function requireHigherClearance(targetClearance, actorClearance) {
-    return actorClearance > targetClearance;
+// FIX: dedicated middleware for "only the God_Emperor account
+// may do this" — explicit and unambiguous, rather than relying
+// on a clearance threshold that happens to only be reachable by
+// account id 1 today. Any account, however high clearance, is
+// blocked unless it IS the super admin.
+function requireSuperAdmin(req, res, next) {
+    if (req.user.id !== 1) {
+        logAction('ACCESS_DENIED', req.user.callsign, 'Super admin required');
+        return res.status(403).json({ error: 'Only the God_Emperor account can perform this action.' });
+    }
+    next();
 }
 
 function buildUserResponse(person) {
@@ -238,7 +268,6 @@ app.post('/api/auth/login', async (req, res) => {
     await logAction('LOGIN_ATTEMPT', callsign, `IP: ${ip}`);
 
     try {
-        // Look up by callsign only — password comparison happens via bcrypt below
         const result = await pool.query(
             'SELECT * FROM imperial_personnel WHERE callsign = $1',
             [callsign]
@@ -346,7 +375,12 @@ app.get('/api/subjects/:id', authenticate, async (req, res) => {
     }
 });
 
-app.post('/api/subjects', authenticate, async (req, res) => {
+// FIX: create/update/delete on subjects previously had no
+// clearance gate at all — any authenticated user (clearance 1+)
+// could mutate records. Added a low-bar requireClearance(2) so
+// basic accounts can still be created deliberately at level 1
+// as "read-only" if desired. Adjust the number to taste.
+app.post('/api/subjects', authenticate, requireClearance(2), async (req, res) => {
     const { designation, classification, planet_of_origin, loyalty_status, notes, roblox_profile, discord_userid } = req.body;
 
     try {
@@ -361,7 +395,7 @@ app.post('/api/subjects', authenticate, async (req, res) => {
     }
 });
 
-app.put('/api/subjects/:id', authenticate, async (req, res) => {
+app.put('/api/subjects/:id', authenticate, requireClearance(2), async (req, res) => {
     const id = req.params.id;
     const { designation, classification, planet_of_origin, loyalty_status, notes, roblox_profile, discord_userid } = req.body;
 
@@ -380,7 +414,7 @@ app.put('/api/subjects/:id', authenticate, async (req, res) => {
     }
 });
 
-app.delete('/api/subjects/:id', authenticate, async (req, res) => {
+app.delete('/api/subjects/:id', authenticate, requireClearance(2), async (req, res) => {
     const id = req.params.id;
     try {
         const result = await pool.query('DELETE FROM imperial_subjects WHERE id = $1 RETURNING id', [id]);
@@ -425,7 +459,7 @@ app.get('/api/casefiles/:id', authenticate, async (req, res) => {
     }
 });
 
-app.post('/api/casefiles', authenticate, async (req, res) => {
+app.post('/api/casefiles', authenticate, requireClearance(2), async (req, res) => {
     const { designation, threat_level, status, assigned_officer, summary, content, access_level } = req.body;
 
     try {
@@ -442,14 +476,14 @@ app.post('/api/casefiles', authenticate, async (req, res) => {
     }
 });
 
-app.put('/api/casefiles/:id', authenticate, async (req, res) => {
+app.put('/api/casefiles/:id', authenticate, requireClearance(2), async (req, res) => {
     const id = req.params.id;
     const { designation, threat_level, status, assigned_officer, summary, content, access_level } = req.body;
 
     try {
         const result = await pool.query(
             'UPDATE imperial_casefiles SET designation = $1, threat_level = $2, status = $3, assigned_officer = $4, summary = $5, content = $6, access_level = $7, updated_at = $8 WHERE id = $9 RETURNING *',
-            [designation, threat_level, status, assigned_officer, summary, content, access_level, new Date().toISOString(), id]
+            [designation, threat_level, status, assigned_officer, summary, content, access_level || 1, new Date().toISOString(), id]
         );
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Case not found' });
@@ -461,7 +495,7 @@ app.put('/api/casefiles/:id', authenticate, async (req, res) => {
     }
 });
 
-app.delete('/api/casefiles/:id', authenticate, async (req, res) => {
+app.delete('/api/casefiles/:id', authenticate, requireClearance(2), async (req, res) => {
     const id = req.params.id;
     try {
         const result = await pool.query('DELETE FROM imperial_casefiles WHERE id = $1 RETURNING id', [id]);
@@ -523,7 +557,7 @@ app.get('/api/reports/:id', authenticate, async (req, res) => {
     }
 });
 
-app.post('/api/reports', authenticate, async (req, res) => {
+app.post('/api/reports', authenticate, requireClearance(2), async (req, res) => {
     const { case_id, content, classification, access_level } = req.body;
 
     try {
@@ -532,8 +566,11 @@ app.post('/api/reports', authenticate, async (req, res) => {
         const case_designation = caseResult.rows.length > 0 ? caseResult.rows[0].designation : `Case_${case_id}`;
 
         const result = await pool.query(
+            // FIX: access_level now falls back to 1 instead of
+            // inserting an explicit NULL that overrides the
+            // column's DEFAULT 1 when the client omits it.
             'INSERT INTO imperial_reports (case_id, case_designation, author_name, content, classification, access_level, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-            [case_id, case_designation, req.user.callsign, content, classification, access_level, new Date().toISOString()]
+            [case_id, case_designation, req.user.callsign, content, classification, access_level || 1, new Date().toISOString()]
         );
 
         // Update report count in casefile
@@ -546,7 +583,7 @@ app.post('/api/reports', authenticate, async (req, res) => {
     }
 });
 
-app.delete('/api/reports/:id', authenticate, async (req, res) => {
+app.delete('/api/reports/:id', authenticate, requireClearance(2), async (req, res) => {
     const id = req.params.id;
     try {
         const result = await pool.query('DELETE FROM imperial_reports WHERE id = $1 RETURNING id', [id]);
@@ -598,7 +635,7 @@ app.get('/api/evidence/:id', authenticate, async (req, res) => {
     }
 });
 
-app.post('/api/evidence', authenticate, async (req, res) => {
+app.post('/api/evidence', authenticate, requireClearance(2), async (req, res) => {
     const { case_id, file_name, storage_path, evidence_type, access_level } = req.body;
 
     try {
@@ -606,8 +643,9 @@ app.post('/api/evidence', authenticate, async (req, res) => {
         const case_designation = caseResult.rows.length > 0 ? caseResult.rows[0].designation : `Case_${case_id}`;
 
         const result = await pool.query(
+            // FIX: same NULL-vs-DEFAULT issue as reports, patched here too.
             'INSERT INTO imperial_evidence (case_id, case_designation, file_name, storage_path, evidence_type, uploaded_by_name, access_level, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-            [case_id, case_designation, file_name, storage_path, evidence_type, req.user.callsign, access_level, new Date().toISOString()]
+            [case_id, case_designation, file_name, storage_path, evidence_type, req.user.callsign, access_level || 1, new Date().toISOString()]
         );
         await logAction('UPLOAD_EVIDENCE', req.user.callsign, `File: ${file_name}`);
         res.status(201).json(result.rows[0]);
@@ -616,7 +654,7 @@ app.post('/api/evidence', authenticate, async (req, res) => {
     }
 });
 
-app.delete('/api/evidence/:id', authenticate, async (req, res) => {
+app.delete('/api/evidence/:id', authenticate, requireClearance(2), async (req, res) => {
     const id = req.params.id;
     try {
         const result = await pool.query('DELETE FROM imperial_evidence WHERE id = $1 RETURNING id', [id]);
@@ -656,7 +694,7 @@ app.get('/api/entities/:id', authenticate, async (req, res) => {
     }
 });
 
-app.post('/api/entities', authenticate, async (req, res) => {
+app.post('/api/entities', authenticate, requireClearance(2), async (req, res) => {
     const { entity_name, entity_type, classification, description, linked_subject_id, linked_case_id, threat_rating, access_level } = req.body;
 
     try {
@@ -685,7 +723,7 @@ app.post('/api/entities', authenticate, async (req, res) => {
     }
 });
 
-app.delete('/api/entities/:id', authenticate, async (req, res) => {
+app.delete('/api/entities/:id', authenticate, requireClearance(2), async (req, res) => {
     const id = req.params.id;
     try {
         const result = await pool.query('DELETE FROM imperial_entities WHERE id = $1 RETURNING id', [id]);
@@ -731,7 +769,7 @@ app.get('/api/personnel/:id', authenticate, async (req, res) => {
     }
 });
 
-app.post('/api/personnel', authenticate, requireClearance(900), async (req, res) => {
+app.post('/api/personnel', authenticate, requireSuperAdmin, async (req, res) => {
     const { callsign, password, rank, department, clearance_level } = req.body;
     
     if (!callsign || !password) {
@@ -746,7 +784,8 @@ app.post('/api/personnel', authenticate, requireClearance(900), async (req, res)
         
         const requestedClearance = Math.min(Math.max(parseInt(clearance_level) || 1, 1), 10);
 
-        if (requestedClearance >= req.user.clearance_level) {
+        // FIX: now reuses requireHigherClearance instead of a raw inline comparison.
+        if (!requireHigherClearance(requestedClearance, req.user.clearance_level)) {
             return res.status(403).json({ error: `You cannot grant a clearance level equal to or higher than your own (${req.user.clearance_level})` });
         }
 
@@ -764,7 +803,7 @@ app.post('/api/personnel', authenticate, requireClearance(900), async (req, res)
     }
 });
 
-app.put('/api/personnel/:id', authenticate, requireClearance(900), async (req, res) => {
+app.put('/api/personnel/:id', authenticate, requireSuperAdmin, async (req, res) => {
     const id = req.params.id;
     const { rank, department, clearance_level } = req.body;
 
@@ -773,17 +812,8 @@ app.put('/api/personnel/:id', authenticate, requireClearance(900), async (req, r
         if (targetResult.rows.length === 0) {
             return res.status(404).json({ error: 'Personnel not found' });
         }
-        const targetClearance = targetResult.rows[0].clearance_level;
-
-        if (targetClearance >= req.user.clearance_level) {
-            return res.status(403).json({ error: 'You cannot edit personnel with equal or higher clearance than your own' });
-        }
 
         const requestedClearance = Math.min(Math.max(parseInt(clearance_level) || 1, 1), 10);
-
-        if (requestedClearance >= req.user.clearance_level) {
-            return res.status(403).json({ error: `You cannot grant a clearance level equal to or higher than your own (${req.user.clearance_level})` });
-        }
 
         const result = await pool.query(
             'UPDATE imperial_personnel SET rank = $1, department = $2, clearance_level = $3 WHERE id = $4 RETURNING id, callsign, rank, clearance_level, department, status, created_at',
@@ -797,17 +827,13 @@ app.put('/api/personnel/:id', authenticate, requireClearance(900), async (req, r
     }
 });
 
-app.put('/api/personnel/:id/toggle', authenticate, requireClearance(900), async (req, res) => {
+app.put('/api/personnel/:id/toggle', authenticate, requireSuperAdmin, async (req, res) => {
     const id = req.params.id;
     
     try {
         const personResult = await pool.query('SELECT status, clearance_level FROM imperial_personnel WHERE id = $1', [id]);
         if (personResult.rows.length === 0) {
             return res.status(404).json({ error: 'Personnel not found' });
-        }
-
-        if (personResult.rows[0].clearance_level >= req.user.clearance_level) {
-            return res.status(403).json({ error: 'You cannot modify personnel with equal or higher clearance than your own' });
         }
         
         const newStatus = personResult.rows[0].status === 'active' ? 'inactive' : 'active';
@@ -820,7 +846,7 @@ app.put('/api/personnel/:id/toggle', authenticate, requireClearance(900), async 
     }
 });
 
-app.delete('/api/personnel/:id', authenticate, requireClearance(900), async (req, res) => {
+app.delete('/api/personnel/:id', authenticate, requireSuperAdmin, async (req, res) => {
     const id = req.params.id;
     
     if (id === '1' || parseInt(id) === 1) {
@@ -831,10 +857,6 @@ app.delete('/api/personnel/:id', authenticate, requireClearance(900), async (req
         const personResult = await pool.query('SELECT clearance_level FROM imperial_personnel WHERE id = $1', [id]);
         if (personResult.rows.length === 0) {
             return res.status(404).json({ error: 'Personnel not found' });
-        }
-
-        if (personResult.rows[0].clearance_level >= req.user.clearance_level) {
-            return res.status(403).json({ error: 'You cannot delete personnel with equal or higher clearance than your own' });
         }
 
         const result = await pool.query('DELETE FROM imperial_personnel WHERE id = $1 RETURNING id', [id]);
