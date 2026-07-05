@@ -176,6 +176,13 @@ app.get("/cases/:id", async (req, res) => {
   }
 });
 
+app.get("/generate-hash/:password", async (req, res) => {
+  const bcrypt = require("bcrypt");
+
+  const hash = await bcrypt.hash(req.params.password, 10);
+  res.send(hash);
+});
+
 app.listen(3000, "0.0.0.0", () => {
  console.log("Imperial server running on port 3000");
 });
