@@ -4,7 +4,7 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const path = require('path');
 const { Pool } = require('pg');
-
+const bcrypt = require('bcrypt');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'the_emperor_protects_forever_2024';
@@ -230,15 +230,18 @@ app.post('/api/auth/login', async (req, res) => {
     await logAction('LOGIN_ATTEMPT', callsign, `IP: ${ip}`);
 
     try {
-        // Use password_hash column name
+        // Look up by callsign ONLY — do not compare password in SQL
         const result = await pool.query(
-            'SELECT * FROM imperial_personnel WHERE callsign = $1 AND password_hash = $2',
-            [callsign, password]
+            'SELECT * FROM imperial_personnel WHERE callsign = $1',
+            [callsign]
         );
 
         const person = result.rows[0];
 
-        if (person) {
+        // Use bcrypt to compare plaintext password against the stored hash
+        const passwordMatches = person && await bcrypt.compare(password, person.password_hash);
+
+        if (person && passwordMatches) {
             if (person.status !== 'active') {
                 await logAction('LOGIN_FAILED', callsign, `IP: ${ip} | Account inactive`);
                 return res.status(403).json({ error: 'This account has been deactivated' });
