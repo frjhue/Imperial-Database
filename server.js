@@ -334,12 +334,12 @@ app.get('/api/subjects/:id', authenticate, async (req, res) => {
 });
 
 app.post('/api/subjects', authenticate, async (req, res) => {
-    const { designation, classification, planet_of_origin, loyalty_status, notes } = req.body;
+    const { designation, classification, planet_of_origin, loyalty_status, notes, roblox_profile, discord_userid } = req.body;
     
     try {
         const result = await pool.query(
-            'INSERT INTO imperial_subjects (designation, classification, planet_of_origin, loyalty_status, notes, created_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-            [designation, classification, planet_of_origin, loyalty_status, notes, new Date().toISOString()]
+            'INSERT INTO imperial_subjects (designation, classification, planet_of_origin, loyalty_status, notes, roblox_profile, discord_userid, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+            [designation, classification, planet_of_origin, loyalty_status, notes, roblox_profile, discord_userid, new Date().toISOString()]
         );
         await logAction('CREATE_SUBJECT', req.user.callsign, `Designation: ${designation}`);
         res.status(201).json(result.rows[0]);
@@ -350,12 +350,12 @@ app.post('/api/subjects', authenticate, async (req, res) => {
 
 app.put('/api/subjects/:id', authenticate, async (req, res) => {
     const id = req.params.id;
-    const { designation, classification, planet_of_origin, loyalty_status, notes } = req.body;
+    const { designation, classification, planet_of_origin, loyalty_status, notes, roblox_profile, discord_userid } = req.body;
     
     try {
         const result = await pool.query(
-            'UPDATE imperial_subjects SET designation = $1, classification = $2, planet_of_origin = $3, loyalty_status = $4, notes = $5, updated_at = $6 WHERE id = $7 RETURNING *',
-            [designation, classification, planet_of_origin, loyalty_status, notes, new Date().toISOString(), id]
+            'UPDATE imperial_subjects SET designation = $1, classification = $2, planet_of_origin = $3, loyalty_status = $4, notes = $5, roblox_profile = $6, discord_userid = $7, updated_at = $8 WHERE id = $9 RETURNING *',
+            [designation, classification, planet_of_origin, loyalty_status, notes, roblox_profile, discord_userid, new Date().toISOString(), id]
         );
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Subject not found' });
@@ -726,19 +726,17 @@ app.post('/api/personnel', authenticate, requireClearance(900), async (req, res)
     }
     
     try {
-        // Check if callsign exists
         const existing = await pool.query('SELECT id FROM imperial_personnel WHERE callsign = $1', [callsign]);
         if (existing.rows.length > 0) {
             return res.status(409).json({ error: 'That callsign is already in use' });
         }
         
-        // Fixed clearance level to 10 and rank is now a free text field
         const clearance_level = 10;
-        
-        // Use password_hash column name
+        const password_hash = await bcrypt.hash(password, 10); // <-- the fix
+
         const result = await pool.query(
             'INSERT INTO imperial_personnel (callsign, password_hash, rank, clearance_level, department, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, callsign, rank, clearance_level, department, status, created_at',
-            [callsign, password, rank || 'Inquisitor', clearance_level, department || 'Unknown', 'active', new Date().toISOString()]
+            [callsign, password_hash, rank || 'Inquisitor', clearance_level, department || 'Unknown', 'active', new Date().toISOString()]
         );
         
         await logAction('CREATE_PERSONNEL', req.user.callsign, `Callsign: ${callsign} | Clearance: ${clearance_level}`);

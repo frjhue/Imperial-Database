@@ -208,20 +208,22 @@ async function loadSubjects() {
         }
 
         tbody.innerHTML = subjects.map(s => `
-            <tr class="clickable-row" onclick="viewSubject(${Number(s.id)})">
-                <td>${escapeHtml(s.id ?? '-')}</td>
-                <td><strong>${escapeHtml(s.designation || 'Unknown')}</strong></td>
-                <td><span class="status-badge ${escapeHtml(s.classification || 'unknown')}">${escapeHtml(s.classification || 'unknown')}</span></td>
-                <td>${escapeHtml(s.planet_of_origin || '-')}</td>
-                <td><span class="status-badge ${escapeHtml(s.loyalty_status || 'unknown')}">${escapeHtml(s.loyalty_status || 'unknown')}</span></td>
-                <td>${s.notes ? escapeHtml(s.notes.substring(0, 50) + (s.notes.length > 50 ? '...' : '')) : '-'}</td>
-                <td>${s.created_at ? escapeHtml(new Date(s.created_at).toLocaleDateString()) : '-'}</td>
-                <td onclick="event.stopPropagation()">
-                    <button class="btn-edit" onclick="editSubject(${Number(s.id)})">✎</button>
-                    <button class="btn-danger" onclick="deleteSubject(${Number(s.id)})">✕</button>
-                </td>
-            </tr>
-        `).join('');
+    <tr class="clickable-row" onclick="viewSubject(${Number(s.id)})">
+        <td>${escapeHtml(s.id ?? '-')}</td>
+        <td><strong>${escapeHtml(s.designation || 'Unknown')}</strong></td>
+        <td><span class="status-badge ${escapeHtml(s.classification || 'unknown')}">${escapeHtml(s.classification || 'unknown')}</span></td>
+        <td>${escapeHtml(s.planet_of_origin || '-')}</td>
+        <td><span class="status-badge ${escapeHtml(s.loyalty_status || 'unknown')}">${escapeHtml(s.loyalty_status || 'unknown')}</span></td>
+        <td>${s.notes ? escapeHtml(s.notes.substring(0, 50) + (s.notes.length > 50 ? '...' : '')) : '-'}</td>
+        <td>${escapeHtml(s.roblox_profile || '-')}</td>
+        <td>${escapeHtml(s.discord_userid || '-')}</td>
+        <td>${s.created_at ? escapeHtml(new Date(s.created_at).toLocaleDateString()) : '-'}</td>
+        <td onclick="event.stopPropagation()">
+            <button class="btn-edit" onclick="editSubject(${Number(s.id)})">✎</button>
+            <button class="btn-danger" onclick="deleteSubject(${Number(s.id)})">✕</button>
+        </td>
+    </tr>
+`).join('');
     } catch (error) {
         document.getElementById('subjectsTableBody').innerHTML =
             '<tr><td colspan="8" class="loading-text">⚠ No subjects available</td></tr>';
@@ -237,6 +239,8 @@ function viewSubject(id) {
         ['Classification', s.classification],
         ['Planet of Origin', s.planet_of_origin],
         ['Loyalty Status', s.loyalty_status],
+        ['Roblox Profile', s.roblox_profile],
+        ['Discord User ID', s.discord_userid],
         ['Notes', s.notes],
         ['Created', s.created_at ? new Date(s.created_at).toLocaleString() : '-']
     ]);
@@ -277,6 +281,16 @@ function openSubjectModal(data = null) {
                 <label>Notes</label>
                 <textarea id="subjNotes">${isEdit ? escapeHtml(data.notes || '') : ''}</textarea>
             </div>
+            <div class="form-row">
+    <div class="form-group">
+        <label>Roblox Profile</label>
+        <input type="text" id="subjRoblox" value="${isEdit ? escapeHtml(data.roblox_profile || '') : ''}">
+    </div>
+    <div class="form-group">
+        <label>Discord User ID</label>
+        <input type="text" id="subjDiscord" value="${isEdit ? escapeHtml(data.discord_userid || '') : ''}">
+    </div>
+</div>
             <button type="submit" class="btn-submit">${isEdit ? 'UPDATE RECORD' : 'CREATE RECORD'}</button>
         </form>
     `;
@@ -285,12 +299,14 @@ function openSubjectModal(data = null) {
 
 async function saveSubject(event, id) {
     event.preventDefault();
-    const data = {
+     const data = {
         designation: document.getElementById('subjDesignation').value.trim(),
         classification: document.getElementById('subjClassification').value,
         planet_of_origin: document.getElementById('subjPlanet').value.trim(),
         loyalty_status: document.getElementById('subjLoyalty').value,
-        notes: document.getElementById('subjNotes').value.trim()
+        notes: document.getElementById('subjNotes').value.trim(),
+        roblox_profile: document.getElementById('subjRoblox').value.trim(),
+        discord_userid: document.getElementById('subjDiscord').value.trim()
     };
     try {
         if (id) await apiRequest(`/subjects/${id}`, 'PUT', data);
