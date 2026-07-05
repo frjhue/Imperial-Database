@@ -8,19 +8,13 @@ const { Pool } = require('pg');
 
 const app = express();
 
-// ------------------------------------------------------------
-// FIX: warn loudly if critical secrets are missing instead of
-// silently falling back to a hardcoded value. The fallback is
-// kept so local/dev usage still works, but you'll see it in logs.
-// ------------------------------------------------------------
+
 if (!process.env.JWT_SECRET) {
     console.warn('[WARN] JWT_SECRET not set in environment — using an insecure default. Set JWT_SECRET in your .env for any non-local deployment.');
 }
 const JWT_SECRET = process.env.JWT_SECRET || 'the_emperor_protects_forever_2024';
 
-// ============================================================
-// POSTGRESQL DATABASE SETUP
-// ============================================================
+
 if (!process.env.DB_PASSWORD) {
     console.warn('[WARN] DB_PASSWORD not set in environment — using an insecure default. Set DB_* vars in your .env for any non-local deployment.');
 }
