@@ -36,18 +36,18 @@ let subjects = [
 let subjectIdCounter = 4;
 
 let casefiles = [
-    { id: 1, designation: 'Case_Omega_Kryptman', threat_level: 'existential', status: 'open', assigned_officer: 999, assigned_officer_name: 'God_Emperor', subject_count: 1, report_count: 3, summary: 'Tracking Inquisitor Kryptman in the Octarius Sector.', created_at: new Date().toISOString() },
-    { id: 2, designation: 'Case_Ahriman_Seeking', threat_level: 'alpha', status: 'open', assigned_officer: 999, assigned_officer_name: 'God_Emperor', subject_count: 1, report_count: 2, summary: "Investigation into Ahriman's search for the Black Library.", created_at: new Date().toISOString() }
+    { id: 1, designation: 'Case_Omega_Kryptman', threat_level: 'existential', status: 'open', assigned_officer: 999, assigned_officer_name: 'God_Emperor', subject_count: 1, report_count: 3, content: 'Full dossier: Kryptman has been tracked moving through the Octarius Sector, believed to be manipulating Tyranid migration patterns using the Kryptman Doctrine (voluntary sacrifice of worlds to redirect Hive Fleets). Grey Knights strike teams are shadowing his movements pending Inquisitorial judgment.', summary: 'Tracking Inquisitor Kryptman in the Octarius Sector.', access_level: 5, created_at: new Date().toISOString() },
+    { id: 2, designation: 'Case_Ahriman_Seeking', threat_level: 'alpha', status: 'open', assigned_officer: 999, assigned_officer_name: 'God_Emperor', subject_count: 1, report_count: 2, content: "Full dossier: Ahriman continues his millennia-long search for a cure to the Rubric of Ahriman. Recent sightings place him near suspected Black Library fragments. Ordo Malleus has authorized lethal force on contact.", summary: "Investigation into Ahriman's search for the Black Library.", access_level: 5, created_at: new Date().toISOString() }
 ];
 let caseIdCounter = 3;
 
 let reports = [
-    { id: 1, case_id: 1, case_designation: 'Case_Omega_Kryptman', author_name: 'God_Emperor', content: 'Kryptman spotted in Octarius Sector. Grey Knights dispatched.', classification: 'top_secret', access_level: 999, created_at: new Date().toISOString() }
+    { id: 1, case_id: 1, case_designation: 'Case_Omega_Kryptman', author_name: 'God_Emperor', content: 'Kryptman spotted in Octarius Sector. Grey Knights dispatched.', classification: 'top_secret', access_level: 5, created_at: new Date().toISOString() }
 ];
 let reportIdCounter = 2;
 
 let evidence = [
-    { id: 1, case_id: 1, case_designation: 'Case_Omega_Kryptman', file_name: 'kryptman_sighting.log', evidence_type: 'document', uploaded_by_name: 'God_Emperor', access_level: 999, created_at: new Date().toISOString() }
+    { id: 1, case_id: 1, case_designation: 'Case_Omega_Kryptman', file_name: 'kryptman_sighting.log', evidence_type: 'document', uploaded_by_name: 'God_Emperor', access_level: 5, created_at: new Date().toISOString() }
 ];
 let evidenceIdCounter = 2;
 
@@ -56,8 +56,10 @@ let entities = [
 ];
 let entityIdCounter = 2;
 
+// NOTE: passwords stored in plaintext for demo purposes only.
+// In any real deployment these must be hashed (e.g. bcrypt) before storage.
 let personnel = [
-    { id: 999, callsign: 'God_Emperor', rank: 'God_Emperor', clearance_level: 999, department: 'Imperial_Palace', status: 'active', created_at: new Date().toISOString() }
+    { id: 999, callsign: 'God_Emperor', password: 'Ksusa', rank: 'God_Emperor', clearance_level: 999, department: 'Imperial_Palace', status: 'active', created_at: new Date().toISOString() }
 ];
 let personnelIdCounter = 1000;
 
@@ -84,31 +86,55 @@ const authenticate = (req, res, next) => {
     }
 };
 
+// Blocks the route entirely unless the caller's clearance meets the minimum
+function requireClearance(minLevel) {
+    return (req, res, next) => {
+        if ((req.user.clearance_level || 0) < minLevel) {
+            logAction('ACCESS_DENIED', req.user.callsign, `Required clearance: ${minLevel}`);
+            return res.status(403).json({ error: `Insufficient clearance. Level ${minLevel}+ required.` });
+        }
+        next();
+    };
+}
+
+function buildUserResponse(person) {
+    return {
+        id: person.id,
+        callsign: person.callsign,
+        rank: person.rank,
+        clearance_level: person.clearance_level,
+        department: person.department
+    };
+}
+
 app.post('/api/auth/login', (req, res) => {
     const { callsign, password } = req.body;
     const ip = req.ip || req.connection.remoteAddress;
 
     logAction('LOGIN_ATTEMPT', callsign, `IP: ${ip}`);
 
-    if (callsign === 'God_Emperor' && password === 'Ksusa') {
+    const person = personnel.find(p => p.callsign === callsign && p.password === password);
+
+    if (person) {
+        if (person.status !== 'active') {
+            logAction('LOGIN_FAILED', callsign, `IP: ${ip} | Account inactive`);
+            return res.status(403).json({ error: 'This account has been deactivated' });
+        }
+
         const token = jwt.sign(
-            { id: 999, callsign: 'God_Emperor', rank: 'God_Emperor', clearance: 999 },
+            {
+                id: person.id,
+                callsign: person.callsign,
+                rank: person.rank,
+                clearance_level: person.clearance_level,
+                department: person.department
+            },
             JWT_SECRET,
             { expiresIn: '9999h' }
         );
 
-        logAction('LOGIN_SUCCESS', 'God_Emperor', `IP: ${ip} | Clearance: 999`);
-
-        return res.json({
-            token,
-            user: {
-                id: 999,
-                callsign: 'God_Emperor',
-                rank: 'God_Emperor',
-                clearance_level: 999,
-                department: 'Imperial_Palace'
-            }
-        });
+        logAction('LOGIN_SUCCESS', person.callsign, `IP: ${ip} | Clearance: ${person.clearance_level}`);
+        return res.json({ token, user: buildUserResponse(person) });
     }
 
     logAction('LOGIN_FAILED', callsign, `IP: ${ip} | Invalid credentials`);
@@ -116,15 +142,11 @@ app.post('/api/auth/login', (req, res) => {
 });
 
 app.get('/api/auth/verify', authenticate, (req, res) => {
-    res.json({
-        user: {
-            id: 999,
-            callsign: 'God_Emperor',
-            rank: 'God_Emperor',
-            clearance_level: 999,
-            department: 'Imperial_Palace'
-        }
-    });
+    const person = personnel.find(p => p.id === req.user.id);
+    if (!person || person.status !== 'active') {
+        return res.status(401).json({ error: 'Account no longer valid' });
+    }
+    res.json({ user: buildUserResponse(person) });
 });
 
 app.post('/api/auth/logout', authenticate, (req, res) => {
@@ -207,19 +229,25 @@ app.get('/api/casefiles/:id', authenticate, (req, res) => {
     const casefile = casefiles.find(c => c.id === parseInt(req.params.id));
     if (!casefile) return res.status(404).json({ error: 'Case not found' });
     logAction('VIEW_CASE', req.user.callsign, `ID: ${req.params.id}`);
+
+    if ((casefile.access_level || 0) > (req.user.clearance_level || 0)) {
+        return res.json({ ...casefile, content: null, redacted: true });
+    }
     res.json(casefile);
 });
 
 app.post('/api/casefiles', authenticate, (req, res) => {
-    const { designation, threat_level, status, assigned_officer, summary } = req.body;
+    const { designation, threat_level, status, assigned_officer, summary, content, access_level } = req.body;
     const newCase = {
         id: caseIdCounter++,
         designation, threat_level, status,
-        assigned_officer: assigned_officer || 999,
-        assigned_officer_name: 'God_Emperor',
+        assigned_officer: assigned_officer || req.user.id,
+        assigned_officer_name: req.user.callsign,
         subject_count: 0,
         report_count: 0,
         summary,
+        content: content || '',
+        access_level: access_level || 1,
         created_at: new Date().toISOString()
     };
     casefiles.push(newCase);
@@ -232,8 +260,8 @@ app.put('/api/casefiles/:id', authenticate, (req, res) => {
     const idx = casefiles.findIndex(c => c.id === id);
     if (idx === -1) return res.status(404).json({ error: 'Case not found' });
 
-    const { designation, threat_level, status, assigned_officer, summary } = req.body;
-    casefiles[idx] = { ...casefiles[idx], designation, threat_level, status, assigned_officer, summary, updated_at: new Date().toISOString() };
+    const { designation, threat_level, status, assigned_officer, summary, content, access_level } = req.body;
+    casefiles[idx] = { ...casefiles[idx], designation, threat_level, status, assigned_officer, summary, content, access_level, updated_at: new Date().toISOString() };
     logAction('UPDATE_CASE', req.user.callsign, `ID: ${id}`);
     res.json(casefiles[idx]);
 });
@@ -255,13 +283,24 @@ app.get('/api/reports', authenticate, (req, res) => {
     const { case_id } = req.query;
     logAction('VIEW_REPORTS', req.user.callsign, `Case ID: ${case_id || 'All'}`);
     const filtered = case_id ? reports.filter(r => r.case_id === parseInt(case_id)) : reports;
-    res.json(filtered);
+
+    const scoped = filtered.map(r => {
+        if ((r.access_level || 0) > (req.user.clearance_level || 0)) {
+            return { ...r, content: null, redacted: true };
+        }
+        return r;
+    });
+    res.json(scoped);
 });
 
 app.get('/api/reports/:id', authenticate, (req, res) => {
     const report = reports.find(r => r.id === parseInt(req.params.id));
     if (!report) return res.status(404).json({ error: 'Report not found' });
     logAction('VIEW_REPORT', req.user.callsign, `ID: ${req.params.id}`);
+
+    if ((report.access_level || 0) > (req.user.clearance_level || 0)) {
+        return res.json({ ...report, content: null, redacted: true });
+    }
     res.json(report);
 });
 
@@ -297,13 +336,24 @@ app.delete('/api/reports/:id', authenticate, (req, res) => {
 // ============================================================
 app.get('/api/evidence', authenticate, (req, res) => {
     logAction('VIEW_EVIDENCE', req.user.callsign, 'List requested');
-    res.json(evidence);
+
+    const scoped = evidence.map(e => {
+        if ((e.access_level || 0) > (req.user.clearance_level || 0)) {
+            return { ...e, storage_path: null, redacted: true };
+        }
+        return e;
+    });
+    res.json(scoped);
 });
 
 app.get('/api/evidence/:id', authenticate, (req, res) => {
     const item = evidence.find(e => e.id === parseInt(req.params.id));
     if (!item) return res.status(404).json({ error: 'Evidence not found' });
     logAction('VIEW_EVIDENCE_ITEM', req.user.callsign, `ID: ${req.params.id}`);
+
+    if ((item.access_level || 0) > (req.user.clearance_level || 0)) {
+        return res.json({ ...item, storage_path: null, redacted: true });
+    }
     res.json(item);
 });
 
@@ -377,40 +427,70 @@ app.delete('/api/entities/:id', authenticate, (req, res) => {
 });
 
 // ============================================================
-// PERSONNEL CRUD
+// PERSONNEL / ACCOUNTS (admin-only management)
 // ============================================================
 app.get('/api/personnel', authenticate, (req, res) => {
     logAction('VIEW_PERSONNEL', req.user.callsign, 'List requested');
-    res.json(personnel);
+    // Never send password hashes/plaintext to the client
+    res.json(personnel.map(({ password, ...rest }) => rest));
 });
 
 app.get('/api/personnel/:id', authenticate, (req, res) => {
     const person = personnel.find(p => p.id === parseInt(req.params.id));
     if (!person) return res.status(404).json({ error: 'Personnel not found' });
-    res.json(person);
+    const { password, ...rest } = person;
+    res.json(rest);
 });
 
-app.post('/api/personnel', authenticate, (req, res) => {
-    const { callsign, rank, clearance_level, department } = req.body;
+// Only accounts with clearance 900+ (i.e. the super-admin tier) can create new accounts
+app.post('/api/personnel', authenticate, requireClearance(900), (req, res) => {
+    const { callsign, password, rank, clearance_level, department } = req.body;
+
+    if (!callsign || !password) {
+        return res.status(400).json({ error: 'Callsign and password are required' });
+    }
+    if (personnel.some(p => p.callsign === callsign)) {
+        return res.status(409).json({ error: 'That callsign is already in use' });
+    }
+
     const newPersonnel = {
         id: personnelIdCounter++,
-        callsign, rank, clearance_level, department,
+        callsign, password, rank,
+        clearance_level: parseInt(clearance_level) || 1,
+        department,
         status: 'active',
         created_at: new Date().toISOString()
     };
     personnel.push(newPersonnel);
-    logAction('CREATE_PERSONNEL', req.user.callsign, `Callsign: ${callsign}`);
-    res.status(201).json(newPersonnel);
+    logAction('CREATE_PERSONNEL', req.user.callsign, `Callsign: ${callsign} | Clearance: ${newPersonnel.clearance_level}`);
+    const { password: _pw, ...rest } = newPersonnel;
+    res.status(201).json(rest);
 });
 
-app.put('/api/personnel/:id/toggle', authenticate, (req, res) => {
+app.put('/api/personnel/:id/toggle', authenticate, requireClearance(900), (req, res) => {
     const id = parseInt(req.params.id);
     const person = personnel.find(p => p.id === id);
     if (!person) return res.status(404).json({ error: 'Personnel not found' });
 
     person.status = person.status === 'active' ? 'inactive' : 'active';
     logAction('TOGGLE_PERSONNEL', req.user.callsign, `ID: ${id} | Status: ${person.status}`);
-    res.json(person);
+    const { password, ...rest } = person;
+    res.json(rest);
+});
+
+app.delete('/api/personnel/:id', authenticate, requireClearance(900), (req, res) => {
+    const id = parseInt(req.params.id);
+
+    if (id === 999) {
+        return res.status(403).json({ error: 'Cannot delete the God_Emperor account' });
+    }
+
+    const idx = personnel.findIndex(p => p.id === id);
+    if (idx === -1) return res.status(404).json({ error: 'Personnel not found' });
+
+    personnel.splice(idx, 1);
+    logAction('DELETE_PERSONNEL', req.user.callsign, `ID: ${id}`);
+    res.json({ message: `Personnel ${id} purged` });
 });
 
 // ============================================================

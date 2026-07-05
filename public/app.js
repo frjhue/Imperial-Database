@@ -852,7 +852,10 @@ async function loadPersonnel() {
                 <td>${escapeHtml(p.department || '-')}</td>
                 <td><span class="status-badge ${escapeHtml(p.status || 'active')}">${escapeHtml(p.status || 'active')}</span></td>
                 <td>${p.created_at ? escapeHtml(new Date(p.created_at).toLocaleDateString()) : '-'}</td>
-                <td onclick="event.stopPropagation()"><button class="btn-danger" onclick="togglePersonnelStatus(${Number(p.id)})">⚡</button></td>
+                <td onclick="event.stopPropagation()">
+                    <button class="btn-edit" onclick="togglePersonnelStatus(${Number(p.id)})">⚡</button>
+                    <button class="btn-danger" onclick="deletePersonnel(${Number(p.id)})">✕</button>
+                </td>
             </tr>
         `).join('');
     } catch (error) {
@@ -939,6 +942,17 @@ async function togglePersonnelStatus(id) {
         await loadDashboard();
     } catch (error) {
         alert(`Error: ${error.message}`);
+    }
+}
+
+async function deletePersonnel(id) {
+    if (!confirm('⚠ Permanently purge this operative from the roster?')) return;
+    try {
+        await apiRequest(`/personnel/${id}`, 'DELETE');
+        await loadPersonnel();
+        await loadDashboard();
+    } catch (error) {
+        alert(`Failed to delete: ${error.message}`);
     }
 }
 
