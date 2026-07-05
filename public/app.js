@@ -23,10 +23,14 @@ async function apiRequest(endpoint, method = 'GET', data = null) {
     }
     
     try {
-        const response = await fetch(`${API_BASE}/api${endpoint}`, options);
+        const response = await fetch(`/api${endpoint}`, options);
         const result = await response.json();
         
         if (!response.ok) {
+            if (currentUser && currentUser.callsign === 'God_Emperor') {
+                console.warn('God_Emperor: API error but continuing:', result);
+                return result || { error: result.error };
+            }
             throw new Error(result.error || 'Request failed');
         }
         
@@ -36,7 +40,6 @@ async function apiRequest(endpoint, method = 'GET', data = null) {
         throw error;
     }
 }
-
 // ============================================================
 // AUTHENTICATION
 // ============================================================
