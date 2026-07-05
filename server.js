@@ -227,19 +227,23 @@ app.post('/api/auth/login', async (req, res) => {
     const { callsign, password } = req.body;
     const ip = req.ip || req.connection.remoteAddress;
 
+    console.log('DEBUG - received callsign:', JSON.stringify(callsign));
+    console.log('DEBUG - received password:', JSON.stringify(password));
+
     await logAction('LOGIN_ATTEMPT', callsign, `IP: ${ip}`);
 
     try {
-        // Look up by callsign ONLY — do not compare password in SQL
         const result = await pool.query(
             'SELECT * FROM imperial_personnel WHERE callsign = $1',
             [callsign]
         );
 
         const person = result.rows[0];
+        console.log('DEBUG - person found:', person ? person.callsign : 'NONE');
+        console.log('DEBUG - stored hash:', person ? person.password_hash : 'N/A');
 
-        // Use bcrypt to compare plaintext password against the stored hash
         const passwordMatches = person && await bcrypt.compare(password, person.password_hash);
+        console.log('DEBUG - passwordMatches:', passwordMatches);
 
         if (person && passwordMatches) {
             if (person.status !== 'active') {
