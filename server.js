@@ -127,7 +127,7 @@ async function initializeDatabase() {
             CREATE TABLE IF NOT EXISTS imperial_logs (
                 id SERIAL PRIMARY KEY,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                actor_name VARCHAR(255),
+                actor_id INTEGER REFERENCES imperial_personnel(id),
                 action VARCHAR(255),
                 target_type VARCHAR(255),
                 target_id INTEGER
@@ -159,9 +159,21 @@ async function logAction(action, user = 'System', details = '') {
     console.log(`[${timestamp}] ${action} | User: ${user} | ${details}`);
     
     try {
+        // Get the user ID if the user exists
+        let actorId = null;
+        if (user !== 'System' && user !== 'Unknown') {
+            const result = await pool.query(
+                'SELECT id FROM imperial_personnel WHERE callsign = $1',
+                [user]
+            );
+            if (result.rows.length > 0) {
+                actorId = result.rows[0].id;
+            }
+        }
+        
         await pool.query(
-            'INSERT INTO imperial_logs (timestamp, actor_name, action, target_type, target_id) VALUES ($1, $2, $3, $4, $5)',
-            [timestamp, user, action, null, null]
+            'INSERT INTO imperial_logs (timestamp, actor_id, action, target_type, target_id) VALUES ($1, $2, $3, $4, $5)',
+            [timestamp, actorId, action, null, null]
         );
     } catch (err) {
         console.error('Error logging action:', err);
@@ -783,7 +795,20 @@ app.delete('/api/personnel/:id', authenticate, requireClearance(900), async (req
 // ============================================================
 app.get('/api/logs', authenticate, async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM imperial_logs ORDER BY id DESC LIMIT 200');
+        const result = await pool.query(`
+            SELECT 
+                l.id,
+                l.timestamp,
+                l.action,
+                l.target_type,
+                l.target_id,
+                p.callsign as actor_name,
+                p.id as actor_id
+            FROM imperial_logs l
+            LEFT JOIN imperial_personnel p ON l.actor_id = p.id
+            ORDER BY l.id DESC 
+            LIMIT 200
+        `);
         res.json(result.rows);
     } catch (err) {
         return res.status(500).json({ error: 'Database error' });
