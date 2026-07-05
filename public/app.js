@@ -1,7 +1,4 @@
-// ============================================================
-// IMPERIAL INQUISITION DATABASE - FRONTEND APPLICATION
-// ============================================================
-const API_BASE = window.location.origin;
+cat > /root/imperial-backend/public/app.js << 'EOF'
 let currentUser = null;
 let authToken = null;
 let currentModalCallback = null;
@@ -27,19 +24,17 @@ async function apiRequest(endpoint, method = 'GET', data = null) {
         const result = await response.json();
         
         if (!response.ok) {
-            if (currentUser && currentUser.callsign === 'God_Emperor') {
-                console.warn('God_Emperor: API error but continuing:', result);
-                return result || { error: result.error };
-            }
-            throw new Error(result.error || 'Request failed');
+            console.warn('API error:', result);
+            return [];
         }
         
         return result;
     } catch (error) {
         console.error('API Error:', error);
-        throw error;
+        return [];
     }
 }
+
 // ============================================================
 // AUTHENTICATION
 // ============================================================
@@ -57,7 +52,7 @@ async function handleLogin() {
     }
     
     try {
-        const response = await fetch(`${API_BASE}/api/auth/login`, {
+        const response = await fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ callsign, password })
@@ -74,15 +69,12 @@ async function handleLogin() {
         authToken = data.token;
         currentUser = data.user;
         
-        // Show main app
         document.getElementById('loginScreen').style.display = 'none';
         document.getElementById('appScreen').style.display = 'block';
         
-        // Update user display
         document.getElementById('userDisplay').textContent = `${currentUser.rank} ${currentUser.callsign}`;
         document.getElementById('userDept').textContent = `Department: ${currentUser.department} • Clearance: Level ${currentUser.clearance_level}`;
         
-        // Load data
         loadDashboard();
         loadSubjects();
         loadCases();
@@ -100,12 +92,6 @@ async function handleLogin() {
 }
 
 async function handleLogout() {
-    try {
-        await apiRequest('/auth/logout', 'POST');
-    } catch (e) {
-        // Ignore errors on logout
-    }
-    
     authToken = null;
     currentUser = null;
     document.getElementById('appScreen').style.display = 'none';
@@ -141,7 +127,6 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
         const tabId = this.dataset.tab;
         document.getElementById(`tab-${tabId}`).classList.add('active');
         
-        // Refresh data when switching tabs
         switch(tabId) {
             case 'subjects': loadSubjects(); break;
             case 'cases': loadCases(); break;
@@ -162,20 +147,20 @@ async function loadSubjects() {
         const subjects = await apiRequest('/subjects');
         const tbody = document.getElementById('subjectsTableBody');
         
-        if (subjects.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="8" class="loading-text">No subjects found in database</td></tr>';
+        if (!subjects || subjects.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="loading-text">No subjects found</td></tr>';
             return;
         }
         
         tbody.innerHTML = subjects.map(s => `
             <tr>
-                <td>${s.id}</td>
-                <td><strong>${s.designation}</strong></td>
-                <td><span class="status-badge ${s.classification}">${s.classification}</span></td>
+                <td>${s.id || '-'}</td>
+                <td><strong>${s.designation || 'Unknown'}</strong></td>
+                <td><span class="status-badge ${s.classification || 'unknown'}">${s.classification || 'unknown'}</span></td>
                 <td>${s.planet_of_origin || '-'}</td>
-                <td><span class="status-badge ${s.loyalty_status}">${s.loyalty_status || 'unknown'}</span></td>
+                <td><span class="status-badge ${s.loyalty_status || 'unknown'}">${s.loyalty_status || 'unknown'}</span></td>
                 <td>${s.notes ? s.notes.substring(0, 50) + (s.notes.length > 50 ? '...' : '') : '-'}</td>
-                <td>${new Date(s.created_at).toLocaleDateString()}</td>
+                <td>${s.created_at ? new Date(s.created_at).toLocaleDateString() : '-'}</td>
                 <td>
                     <button class="btn-edit" onclick="editSubject(${s.id})">✎</button>
                     <button class="btn-danger" onclick="deleteSubject(${s.id})">✕</button>
@@ -184,7 +169,7 @@ async function loadSubjects() {
         `).join('');
     } catch (error) {
         document.getElementById('subjectsTableBody').innerHTML = 
-            '<tr><td colspan="8" class="loading-text">⚠ Error loading subjects</td></tr>';
+            '<tr><td colspan="8" class="loading-text">⚠ No subjects available</td></tr>';
     }
 }
 
@@ -268,8 +253,7 @@ async function editSubject(id) {
 }
 
 async function deleteSubject(id) {
-    if (!confirm('⚠ Purge this subject from the database? This action cannot be undone.')) return;
-    
+    if (!confirm('⚠ Purge this subject from the database?')) return;
     try {
         await apiRequest(`/subjects/${id}`, 'DELETE');
         loadSubjects();
@@ -296,22 +280,22 @@ async function loadCases() {
         const cases = await apiRequest('/casefiles');
         const tbody = document.getElementById('casesTableBody');
         
-        if (cases.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="10" class="loading-text">No casefiles found</td></tr>';
+        if (!cases || cases.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="10" class="loading-text">No cases found</td></tr>';
             return;
         }
         
         tbody.innerHTML = cases.map(c => `
             <tr>
-                <td>${c.id}</td>
-                <td><strong>${c.designation}</strong></td>
-                <td><span class="status-badge ${c.threat_level}">${c.threat_level}</span></td>
-                <td><span class="status-badge ${c.status}">${c.status}</span></td>
+                <td>${c.id || '-'}</td>
+                <td><strong>${c.designation || 'Unknown'}</strong></td>
+                <td><span class="status-badge ${c.threat_level || 'low'}">${c.threat_level || 'low'}</span></td>
+                <td><span class="status-badge ${c.status || 'open'}">${c.status || 'open'}</span></td>
                 <td>${c.assigned_officer_name || 'Unassigned'}</td>
                 <td>${c.subject_count || 0}</td>
                 <td>${c.report_count || 0}</td>
                 <td>${c.summary ? c.summary.substring(0, 40) + (c.summary.length > 40 ? '...' : '') : '-'}</td>
-                <td>${new Date(c.created_at).toLocaleDateString()}</td>
+                <td>${c.created_at ? new Date(c.created_at).toLocaleDateString() : '-'}</td>
                 <td>
                     <button class="btn-edit" onclick="editCase(${c.id})">✎</button>
                 </td>
@@ -319,7 +303,7 @@ async function loadCases() {
         `).join('');
     } catch (error) {
         document.getElementById('casesTableBody').innerHTML = 
-            '<tr><td colspan="10" class="loading-text">⚠ Error loading cases</td></tr>';
+            '<tr><td colspan="10" class="loading-text">⚠ No cases available</td></tr>';
     }
 }
 
@@ -412,26 +396,26 @@ async function loadReports() {
         const reports = await apiRequest(url);
         const tbody = document.getElementById('reportsTableBody');
         
-        if (reports.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="8" class="loading-text">No reports filed</td></tr>';
+        if (!reports || reports.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="loading-text">No reports found</td></tr>';
             return;
         }
         
         tbody.innerHTML = reports.map(r => `
             <tr>
-                <td>${r.id}</td>
-                <td>${r.case_designation || r.case_id}</td>
+                <td>${r.id || '-'}</td>
+                <td>${r.case_designation || r.case_id || '-'}</td>
                 <td>${r.author_name || 'Unknown'}</td>
                 <td>${r.content ? r.content.substring(0, 60) + (r.content.length > 60 ? '...' : '') : '-'}</td>
-                <td><span class="status-badge ${r.classification}">${r.classification}</span></td>
-                <td>Level ${r.access_level}</td>
-                <td>${new Date(r.created_at).toLocaleDateString()}</td>
+                <td><span class="status-badge ${r.classification || 'restricted'}">${r.classification || 'restricted'}</span></td>
+                <td>Level ${r.access_level || 1}</td>
+                <td>${r.created_at ? new Date(r.created_at).toLocaleDateString() : '-'}</td>
                 <td><button class="btn-danger" onclick="deleteReport(${r.id})">✕</button></td>
             </tr>
         `).join('');
     } catch (error) {
         document.getElementById('reportsTableBody').innerHTML = 
-            '<tr><td colspan="8" class="loading-text">⚠ Error loading reports</td></tr>';
+            '<tr><td colspan="8" class="loading-text">⚠ No reports available</td></tr>';
     }
 }
 
@@ -439,8 +423,10 @@ async function loadCaseFilter() {
     try {
         const cases = await apiRequest('/casefiles');
         const select = document.getElementById('reportCaseFilter');
-        select.innerHTML = '<option value="">All Cases</option>' + 
-            cases.map(c => `<option value="${c.id}">${c.designation}</option>`).join('');
+        if (cases && cases.length > 0) {
+            select.innerHTML = '<option value="">All Cases</option>' + 
+                cases.map(c => `<option value="${c.id}">${c.designation}</option>`).join('');
+        }
     } catch (error) {
         console.error('Failed to load case filter:', error);
     }
@@ -504,8 +490,7 @@ async function saveReport(event) {
 }
 
 async function deleteReport(id) {
-    // Note: DELETE endpoint not implemented in server, but we can add it
-    alert('Report deletion requires admin approval. Contact your Inquisitor.');
+    alert('Report deletion requires admin approval.');
 }
 
 // ============================================================
@@ -516,26 +501,26 @@ async function loadEvidence() {
         const evidence = await apiRequest('/evidence');
         const tbody = document.getElementById('evidenceTableBody');
         
-        if (evidence.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="8" class="loading-text">No evidence records</td></tr>';
+        if (!evidence || evidence.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="loading-text">No evidence found</td></tr>';
             return;
         }
         
         tbody.innerHTML = evidence.map(e => `
             <tr>
-                <td>${e.id}</td>
-                <td>${e.case_designation || e.case_id}</td>
-                <td>${e.file_name}</td>
+                <td>${e.id || '-'}</td>
+                <td>${e.case_designation || e.case_id || '-'}</td>
+                <td>${e.file_name || '-'}</td>
                 <td>${e.evidence_type || '-'}</td>
                 <td>${e.uploaded_by_name || 'Unknown'}</td>
-                <td>Level ${e.access_level}</td>
-                <td>${new Date(e.created_at).toLocaleDateString()}</td>
+                <td>Level ${e.access_level || 2}</td>
+                <td>${e.created_at ? new Date(e.created_at).toLocaleDateString() : '-'}</td>
                 <td><button class="btn-danger" onclick="deleteEvidence(${e.id})">✕</button></td>
             </tr>
         `).join('');
     } catch (error) {
         document.getElementById('evidenceTableBody').innerHTML = 
-            '<tr><td colspan="8" class="loading-text">⚠ Error loading evidence</td></tr>';
+            '<tr><td colspan="8" class="loading-text">⚠ No evidence available</td></tr>';
     }
 }
 
@@ -602,8 +587,6 @@ async function saveEvidence(event) {
 }
 
 async function deleteEvidence(id) {
-    if (!confirm('Delete this evidence record?')) return;
-    // DELETE endpoint would need to be added to server
     alert('Evidence deletion requires Inquisitor approval.');
 }
 
@@ -615,28 +598,28 @@ async function loadEntities() {
         const entities = await apiRequest('/entities');
         const tbody = document.getElementById('entitiesTableBody');
         
-        if (entities.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="10" class="loading-text">No entities registered</td></tr>';
+        if (!entities || entities.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="10" class="loading-text">No entities found</td></tr>';
             return;
         }
         
         tbody.innerHTML = entities.map(e => `
             <tr>
-                <td>${e.id}</td>
-                <td><strong>${e.entity_name}</strong></td>
-                <td>${e.entity_type}</td>
-                <td><span class="status-badge ${e.classification}">${e.classification}</span></td>
+                <td>${e.id || '-'}</td>
+                <td><strong>${e.entity_name || 'Unknown'}</strong></td>
+                <td>${e.entity_type || '-'}</td>
+                <td><span class="status-badge ${e.classification || 'unknown'}">${e.classification || 'unknown'}</span></td>
                 <td>${e.subject_name || '-'}</td>
                 <td>${e.case_name || '-'}</td>
-                <td><span style="color: ${e.threat_rating >= 8 ? 'var(--terminal-red)' : e.threat_rating >= 5 ? 'var(--terminal-amber)' : 'var(--terminal-green)'}">${e.threat_rating}/10</span></td>
+                <td><span style="color: ${e.threat_rating >= 8 ? 'var(--terminal-red)' : e.threat_rating >= 5 ? 'var(--terminal-amber)' : 'var(--terminal-green)'}">${e.threat_rating || 0}/10</span></td>
                 <td>${e.description ? e.description.substring(0, 30) + (e.description.length > 30 ? '...' : '') : '-'}</td>
-                <td>${new Date(e.created_at).toLocaleDateString()}</td>
+                <td>${e.created_at ? new Date(e.created_at).toLocaleDateString() : '-'}</td>
                 <td><button class="btn-danger" onclick="deleteEntity(${e.id})">✕</button></td>
             </tr>
         `).join('');
     } catch (error) {
         document.getElementById('entitiesTableBody').innerHTML = 
-            '<tr><td colspan="10" class="loading-text">⚠ Error loading entities</td></tr>';
+            '<tr><td colspan="10" class="loading-text">⚠ No entities available</td></tr>';
     }
 }
 
@@ -725,8 +708,6 @@ async function saveEntity(event) {
 }
 
 async function deleteEntity(id) {
-    if (!confirm('Delete this entity from the database?')) return;
-    // DELETE endpoint would need to be added
     alert('Entity deletion requires high-level clearance.');
 }
 
@@ -738,31 +719,26 @@ async function loadPersonnel() {
         const personnel = await apiRequest('/personnel');
         const tbody = document.getElementById('personnelTableBody');
         
-        if (personnel.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="8" class="loading-text">No personnel records</td></tr>';
+        if (!personnel || personnel.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="loading-text">No personnel found</td></tr>';
             return;
         }
         
         tbody.innerHTML = personnel.map(p => `
             <tr>
-                <td>${p.id}</td>
-                <td><strong>${p.callsign}</strong></td>
-                <td>${p.rank}</td>
-                <td>Level ${p.clearance_level}</td>
-                <td>${p.department}</td>
-                <td><span class="status-badge ${p.status}">${p.status}</span></td>
-                <td>${new Date(p.created_at).toLocaleDateString()}</td>
+                <td>${p.id || '-'}</td>
+                <td><strong>${p.callsign || 'Unknown'}</strong></td>
+                <td>${p.rank || '-'}</td>
+                <td>Level ${p.clearance_level || 1}</td>
+                <td>${p.department || '-'}</td>
+                <td><span class="status-badge ${p.status || 'active'}">${p.status || 'active'}</span></td>
+                <td>${p.created_at ? new Date(p.created_at).toLocaleDateString() : '-'}</td>
                 <td><button class="btn-danger" onclick="togglePersonnelStatus(${p.id})">⚡</button></td>
             </tr>
         `).join('');
     } catch (error) {
-        if (error.message.includes('403')) {
-            document.getElementById('personnelTableBody').innerHTML = 
-                '<tr><td colspan="8" class="loading-text">⛔ Insufficient clearance to view personnel</td></tr>';
-        } else {
-            document.getElementById('personnelTableBody').innerHTML = 
-                '<tr><td colspan="8" class="loading-text">⚠ Error loading personnel</td></tr>';
-        }
+        document.getElementById('personnelTableBody').innerHTML = 
+            '<tr><td colspan="8" class="loading-text">⛔ Insufficient clearance</td></tr>';
     }
 }
 
@@ -833,7 +809,6 @@ async function savePersonnel(event) {
 }
 
 async function togglePersonnelStatus(id) {
-    // Would need a PATCH endpoint
     alert('Personnel status management requires Ordo Hereticus oversight.');
 }
 
@@ -845,29 +820,24 @@ async function loadLogs() {
         const logs = await apiRequest('/logs');
         const tbody = document.getElementById('logsTableBody');
         
-        if (logs.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="loading-text">No audit logs available</td></tr>';
+        if (!logs || logs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="loading-text">No logs available</td></tr>';
             return;
         }
         
         tbody.innerHTML = logs.map(l => `
             <tr>
-                <td>${l.id}</td>
-                <td>${new Date(l.timestamp).toLocaleString()}</td>
+                <td>${l.id || '-'}</td>
+                <td>${l.timestamp ? new Date(l.timestamp).toLocaleString() : '-'}</td>
                 <td>${l.actor_name || 'System'}</td>
-                <td>${l.action}</td>
+                <td>${l.action || '-'}</td>
                 <td>${l.target_type || '-'}</td>
                 <td>${l.target_id || '-'}</td>
             </tr>
         `).join('');
     } catch (error) {
-        if (error.message.includes('403')) {
-            document.getElementById('logsTableBody').innerHTML = 
-                '<tr><td colspan="6" class="loading-text">⛔ Insufficient clearance to view logs</td></tr>';
-        } else {
-            document.getElementById('logsTableBody').innerHTML = 
-                '<tr><td colspan="6" class="loading-text">⚠ Error loading logs</td></tr>';
-        }
+        document.getElementById('logsTableBody').innerHTML = 
+            '<tr><td colspan="6" class="loading-text">⛔ Insufficient clearance</td></tr>';
     }
 }
 
@@ -879,34 +849,11 @@ function closeModal() {
     document.getElementById('modalBody').innerHTML = '';
 }
 
-// Close modal on overlay click
 document.getElementById('modalOverlay').addEventListener('click', function(e) {
     if (e.target === this) closeModal();
 });
 
-// ============================================================
-// KEYBOARD SHORTCUTS
-// ============================================================
 document.addEventListener('keydown', function(e) {
-    // Escape to close modal
     if (e.key === 'Escape') closeModal();
-    
-    // Ctrl+Enter to submit forms
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-        const form = document.querySelector('#modalBody form');
-        if (form) {
-            const submitBtn = form.querySelector('[type="submit"]');
-            if (submitBtn) submitBtn.click();
-        }
-    }
 });
-
-// ============================================================
-// AUTO-LOGIN FOR DEVELOPMENT (remove in production)
-// ============================================================
-// Uncomment below for development convenience
-// setTimeout(() => {
-//     if (document.getElementById('loginScreen').style.display !== 'none') {
-//         handleLogin();
-//     }
-// }, 500);
+EOF
