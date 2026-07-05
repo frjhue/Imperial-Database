@@ -7,7 +7,6 @@ const path = require('path');
 const { Pool } = require('pg');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
 
 // ------------------------------------------------------------
 // FIX: warn loudly if critical secrets are missing instead of
@@ -896,19 +895,19 @@ app.get('/api/logs', authenticate, async (req, res) => {
 // ============================================================
 // FRONTEND
 // ============================================================
-app.get('*', (req, res) => {
+app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // ============================================================
 // START SERVER
 // ============================================================
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(3000, '0.0.0.0', () => {
     console.log(`
-    ═══════════════════════════════════════════════
+    ═══════════════════════════════════════════════t45
     IMPERIAL INQUISITION DATABASE TERMINAL
     ═══════════════════════════════════════════════
-    Server: http://localhost:${PORT}
+    Server: http://localhost:3000
     Super Admin: God_Emperor
     Database: PostgreSQL
     ═══════════════════════════════════════════════
