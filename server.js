@@ -566,14 +566,32 @@ app.get('*', (req, res) => {
 // ============================================================
 // START SERVER
 // ============================================================
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`
     ═══════════════════════════════════════════════
     🏛️  IMPERIAL INQUISITION DATABASE TERMINAL
     ═══════════════════════════════════════════════
-    📡 Server running on: http://localhost:${PORT}
+    📡 Server running on:
+       - Local:    http://localhost:${PORT}
+       - Network:  http://${getLocalIP()}:${PORT}
     ⚙️  Environment: ${process.env.NODE_ENV || 'development'}
     🗄️  Database: ${process.env.DB_NAME || 'internal_db'}
     ═══════════════════════════════════════════════
     `);
 });
+
+
+function getLocalIP() {
+    const { networkInterfaces } = require('os');
+    const nets = networkInterfaces();
+    
+    for (const name of Object.keys(nets)) {
+        for (const net of nets[name]) {
+            // Skip over non-IPv4 and internal (loopback) addresses
+            if (net.family === 'IPv4' && !net.internal) {
+                return net.address;
+            }
+        }
+    }
+    return 'localhost';
+}
