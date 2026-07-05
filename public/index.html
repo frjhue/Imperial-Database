@@ -16,21 +16,21 @@
             <div class="aquila-header">⛧</div>
             <h1>IMPERIAL INQUISITION</h1>
             <div class="subtitle">• COGITATOR TERMINAL v3.1 •</div>
-            
+
             <div class="login-form">
                 <label for="loginCallsign">⚜ Callsign</label>
                 <input type="text" id="loginCallsign" placeholder="Enter your callsign" value="God_Emperor">
-                
+
                 <label for="loginPassword">⚜ Access Code</label>
                 <input type="password" id="loginPassword" placeholder="Enter password" value="Ksusa">
-                
+
                 <div id="loginError" class="login-error"></div>
-                
+
                 <button class="btn-login" onclick="handleLogin()">
                     <span class="btn-text">AUTHORIZE ACCESS</span>
                     <span class="btn-glyph">⛧</span>
                 </button>
-                
+
                 <div class="login-footer">
                     <span>Clearance required: Level 1+</span>
                     <span>•</span>
@@ -114,13 +114,15 @@
                             <th>Classification</th>
                             <th>Planet of Origin</th>
                             <th>Loyalty Status</th>
+                            <th>Roblox Profile</th>
+                            <th>Discord ID</th>
                             <th>Notes</th>
                             <th>Created</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody id="subjectsTableBody">
-                        <tr><td colspan="8" class="loading-text">Loading subjects...</td></tr>
+                        <tr><td colspan="10" class="loading-text">Loading subjects...</td></tr>
                     </tbody>
                 </table>
             </div>

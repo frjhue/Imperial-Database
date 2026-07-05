@@ -2,9 +2,10 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
 const path = require('path');
 const { Pool } = require('pg');
-const bcrypt = require('bcrypt');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'the_emperor_protects_forever_2024';
@@ -58,6 +59,8 @@ async function initializeDatabase() {
                 planet_of_origin VARCHAR(255),
                 loyalty_status VARCHAR(255),
                 notes TEXT,
+                roblox_profile TEXT,
+                discord_userid TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP
             )
@@ -134,6 +137,14 @@ async function initializeDatabase() {
             )
         `);
 
+        // Insert default God_Emperor account if not exists, with a properly bcrypt-hashed password
+        const defaultPasswordHash = await bcrypt.hash('Ksusa', 10);
+        await pool.query(`
+            INSERT INTO imperial_personnel (id, callsign, password_hash, rank, clearance_level, department, status, created_at) 
+            VALUES (1, 'God_Emperor', $1, 'God_Emperor', 999, 'Imperial_Palace', 'active', CURRENT_TIMESTAMP)
+            ON CONFLICT (callsign) DO NOTHING
+        `, [defaultPasswordHash]);
+
         console.log('Database initialized successfully');
     } catch (err) {
         console.error('Error initializing database:', err);
@@ -150,7 +161,7 @@ app.use(express.static('public'));
 async function logAction(action, user = 'System', details = '') {
     const timestamp = new Date().toISOString();
     console.log(`[${timestamp}] ${action} | User: ${user} | ${details}`);
-    
+
     try {
         // Get the user ID if the user exists
         let actorId = null;
@@ -163,7 +174,7 @@ async function logAction(action, user = 'System', details = '') {
                 actorId = result.rows[0].id;
             }
         }
-        
+
         await pool.query(
             'INSERT INTO imperial_logs (timestamp, actor_id, action, target_type, target_id) VALUES ($1, $2, $3, $4, $5)',
             [timestamp, actorId, action, null, null]
@@ -223,16 +234,14 @@ app.post('/api/auth/login', async (req, res) => {
     await logAction('LOGIN_ATTEMPT', callsign, `IP: ${ip}`);
 
     try {
+        // Look up by callsign only — password comparison happens via bcrypt below
         const result = await pool.query(
             'SELECT * FROM imperial_personnel WHERE callsign = $1',
             [callsign]
         );
 
         const person = result.rows[0];
-
-        const isHardcodedAdmin = callsign === 'God_Emperor' && password === 'Ksusa';
-
-        const passwordMatches = isHardcodedAdmin || (person && await bcrypt.compare(password, person.password_hash));
+        const passwordMatches = person && await bcrypt.compare(password, person.password_hash);
 
         if (person && passwordMatches) {
             if (person.status !== 'active') {
@@ -270,7 +279,7 @@ app.get('/api/auth/verify', authenticate, async (req, res) => {
             'SELECT * FROM imperial_personnel WHERE id = $1 AND status = $2',
             [req.user.id, 'active']
         );
-        
+
         if (result.rows.length === 0) {
             return res.status(401).json({ error: 'Account no longer valid' });
         }
@@ -290,7 +299,7 @@ app.post('/api/auth/logout', authenticate, async (req, res) => {
 // ============================================================
 app.get('/api/dashboard/stats', authenticate, async (req, res) => {
     await logAction('VIEW_DASHBOARD', req.user.callsign, 'Stats requested');
-    
+
     try {
         const result = await pool.query(`
             SELECT 
@@ -335,7 +344,7 @@ app.get('/api/subjects/:id', authenticate, async (req, res) => {
 
 app.post('/api/subjects', authenticate, async (req, res) => {
     const { designation, classification, planet_of_origin, loyalty_status, notes, roblox_profile, discord_userid } = req.body;
-    
+
     try {
         const result = await pool.query(
             'INSERT INTO imperial_subjects (designation, classification, planet_of_origin, loyalty_status, notes, roblox_profile, discord_userid, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
@@ -351,7 +360,7 @@ app.post('/api/subjects', authenticate, async (req, res) => {
 app.put('/api/subjects/:id', authenticate, async (req, res) => {
     const id = req.params.id;
     const { designation, classification, planet_of_origin, loyalty_status, notes, roblox_profile, discord_userid } = req.body;
-    
+
     try {
         const result = await pool.query(
             'UPDATE imperial_subjects SET designation = $1, classification = $2, planet_of_origin = $3, loyalty_status = $4, notes = $5, roblox_profile = $6, discord_userid = $7, updated_at = $8 WHERE id = $9 RETURNING *',
@@ -402,7 +411,7 @@ app.get('/api/casefiles/:id', authenticate, async (req, res) => {
         }
         const casefile = result.rows[0];
         await logAction('VIEW_CASE', req.user.callsign, `ID: ${req.params.id}`);
-        
+
         if ((casefile.access_level || 0) > (req.user.clearance_level || 0)) {
             return res.json({ ...casefile, content: null, redacted: true });
         }
@@ -414,7 +423,7 @@ app.get('/api/casefiles/:id', authenticate, async (req, res) => {
 
 app.post('/api/casefiles', authenticate, async (req, res) => {
     const { designation, threat_level, status, assigned_officer, summary, content, access_level } = req.body;
-    
+
     try {
         const result = await pool.query(
             `INSERT INTO imperial_casefiles 
@@ -432,7 +441,7 @@ app.post('/api/casefiles', authenticate, async (req, res) => {
 app.put('/api/casefiles/:id', authenticate, async (req, res) => {
     const id = req.params.id;
     const { designation, threat_level, status, assigned_officer, summary, content, access_level } = req.body;
-    
+
     try {
         const result = await pool.query(
             'UPDATE imperial_casefiles SET designation = $1, threat_level = $2, status = $3, assigned_officer = $4, summary = $5, content = $6, access_level = $7, updated_at = $8 WHERE id = $9 RETURNING *',
@@ -468,7 +477,7 @@ app.delete('/api/casefiles/:id', authenticate, async (req, res) => {
 app.get('/api/reports', authenticate, async (req, res) => {
     const { case_id } = req.query;
     await logAction('VIEW_REPORTS', req.user.callsign, `Case ID: ${case_id || 'All'}`);
-    
+
     try {
         let query = 'SELECT * FROM imperial_reports';
         const params = [];
@@ -477,9 +486,9 @@ app.get('/api/reports', authenticate, async (req, res) => {
             params.push(parseInt(case_id));
         }
         query += ' ORDER BY id DESC';
-        
+
         const result = await pool.query(query, params);
-        
+
         const scoped = result.rows.map(r => {
             if ((r.access_level || 0) > (req.user.clearance_level || 0)) {
                 return { ...r, content: null, redacted: true };
@@ -500,7 +509,7 @@ app.get('/api/reports/:id', authenticate, async (req, res) => {
         }
         const report = result.rows[0];
         await logAction('VIEW_REPORT', req.user.callsign, `ID: ${req.params.id}`);
-        
+
         if ((report.access_level || 0) > (req.user.clearance_level || 0)) {
             return res.json({ ...report, content: null, redacted: true });
         }
@@ -512,20 +521,20 @@ app.get('/api/reports/:id', authenticate, async (req, res) => {
 
 app.post('/api/reports', authenticate, async (req, res) => {
     const { case_id, content, classification, access_level } = req.body;
-    
+
     try {
         // Get case designation
         const caseResult = await pool.query('SELECT designation FROM imperial_casefiles WHERE id = $1', [case_id]);
         const case_designation = caseResult.rows.length > 0 ? caseResult.rows[0].designation : `Case_${case_id}`;
-        
+
         const result = await pool.query(
             'INSERT INTO imperial_reports (case_id, case_designation, author_name, content, classification, access_level, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
             [case_id, case_designation, req.user.callsign, content, classification, access_level, new Date().toISOString()]
         );
-        
+
         // Update report count in casefile
         await pool.query('UPDATE imperial_casefiles SET report_count = report_count + 1 WHERE id = $1', [case_id]);
-        
+
         await logAction('CREATE_REPORT', req.user.callsign, `Case ID: ${case_id}`);
         res.status(201).json(result.rows[0]);
     } catch (err) {
@@ -554,7 +563,7 @@ app.get('/api/evidence', authenticate, async (req, res) => {
     await logAction('VIEW_EVIDENCE', req.user.callsign, 'List requested');
     try {
         const result = await pool.query('SELECT * FROM imperial_evidence ORDER BY id DESC');
-        
+
         const scoped = result.rows.map(e => {
             if ((e.access_level || 0) > (req.user.clearance_level || 0)) {
                 return { ...e, storage_path: null, redacted: true };
@@ -575,7 +584,7 @@ app.get('/api/evidence/:id', authenticate, async (req, res) => {
         }
         const item = result.rows[0];
         await logAction('VIEW_EVIDENCE_ITEM', req.user.callsign, `ID: ${req.params.id}`);
-        
+
         if ((item.access_level || 0) > (req.user.clearance_level || 0)) {
             return res.json({ ...item, storage_path: null, redacted: true });
         }
@@ -587,11 +596,11 @@ app.get('/api/evidence/:id', authenticate, async (req, res) => {
 
 app.post('/api/evidence', authenticate, async (req, res) => {
     const { case_id, file_name, storage_path, evidence_type, access_level } = req.body;
-    
+
     try {
         const caseResult = await pool.query('SELECT designation FROM imperial_casefiles WHERE id = $1', [case_id]);
         const case_designation = caseResult.rows.length > 0 ? caseResult.rows[0].designation : `Case_${case_id}`;
-        
+
         const result = await pool.query(
             'INSERT INTO imperial_evidence (case_id, case_designation, file_name, storage_path, evidence_type, uploaded_by_name, access_level, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
             [case_id, case_designation, file_name, storage_path, evidence_type, req.user.callsign, access_level, new Date().toISOString()]
@@ -645,22 +654,22 @@ app.get('/api/entities/:id', authenticate, async (req, res) => {
 
 app.post('/api/entities', authenticate, async (req, res) => {
     const { entity_name, entity_type, classification, description, linked_subject_id, linked_case_id, threat_rating, access_level } = req.body;
-    
+
     try {
         // Get subject and case names if linked
         let subject_name = null;
         let case_name = null;
-        
+
         if (linked_subject_id) {
             const subjectResult = await pool.query('SELECT designation FROM imperial_subjects WHERE id = $1', [linked_subject_id]);
             if (subjectResult.rows.length > 0) subject_name = subjectResult.rows[0].designation;
         }
-        
+
         if (linked_case_id) {
             const caseResult = await pool.query('SELECT designation FROM imperial_casefiles WHERE id = $1', [linked_case_id]);
             if (caseResult.rows.length > 0) case_name = caseResult.rows[0].designation;
         }
-        
+
         const result = await pool.query(
             'INSERT INTO imperial_entities (entity_name, entity_type, classification, description, subject_name, case_name, threat_rating, access_level, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
             [entity_name, entity_type, classification, description, subject_name, case_name, threat_rating, access_level || 1, new Date().toISOString()]
@@ -720,25 +729,29 @@ app.get('/api/personnel/:id', authenticate, async (req, res) => {
 
 app.post('/api/personnel', authenticate, requireClearance(900), async (req, res) => {
     const { callsign, password, rank, department } = req.body;
-    
+
     if (!callsign || !password) {
         return res.status(400).json({ error: 'Callsign and password are required' });
     }
-    
+
     try {
+        // Check if callsign exists
         const existing = await pool.query('SELECT id FROM imperial_personnel WHERE callsign = $1', [callsign]);
         if (existing.rows.length > 0) {
             return res.status(409).json({ error: 'That callsign is already in use' });
         }
-        
+
+        // Fixed clearance level to 10 and rank is now a free text field
         const clearance_level = 10;
-        const password_hash = await bcrypt.hash(password, 10); // <-- the fix
+
+        // Hash the password before storing it
+        const password_hash = await bcrypt.hash(password, 10);
 
         const result = await pool.query(
             'INSERT INTO imperial_personnel (callsign, password_hash, rank, clearance_level, department, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, callsign, rank, clearance_level, department, status, created_at',
             [callsign, password_hash, rank || 'Inquisitor', clearance_level, department || 'Unknown', 'active', new Date().toISOString()]
         );
-        
+
         await logAction('CREATE_PERSONNEL', req.user.callsign, `Callsign: ${callsign} | Clearance: ${clearance_level}`);
         res.status(201).json(result.rows[0]);
     } catch (err) {
@@ -748,16 +761,16 @@ app.post('/api/personnel', authenticate, requireClearance(900), async (req, res)
 
 app.put('/api/personnel/:id/toggle', authenticate, requireClearance(900), async (req, res) => {
     const id = req.params.id;
-    
+
     try {
         const personResult = await pool.query('SELECT status FROM imperial_personnel WHERE id = $1', [id]);
         if (personResult.rows.length === 0) {
             return res.status(404).json({ error: 'Personnel not found' });
         }
-        
+
         const newStatus = personResult.rows[0].status === 'active' ? 'inactive' : 'active';
         await pool.query('UPDATE imperial_personnel SET status = $1 WHERE id = $2', [newStatus, id]);
-        
+
         await logAction('TOGGLE_PERSONNEL', req.user.callsign, `ID: ${id} | Status: ${newStatus}`);
         res.json({ id: parseInt(id), status: newStatus });
     } catch (err) {
@@ -767,11 +780,11 @@ app.put('/api/personnel/:id/toggle', authenticate, requireClearance(900), async 
 
 app.delete('/api/personnel/:id', authenticate, requireClearance(900), async (req, res) => {
     const id = req.params.id;
-    
+
     if (id === '1' || parseInt(id) === 1) {
         return res.status(403).json({ error: 'Cannot delete the God_Emperor account' });
     }
-    
+
     try {
         const result = await pool.query('DELETE FROM imperial_personnel WHERE id = $1 RETURNING id', [id]);
         if (result.rows.length === 0) {
@@ -783,7 +796,6 @@ app.delete('/api/personnel/:id', authenticate, requireClearance(900), async (req
         return res.status(500).json({ error: err.message });
     }
 });
-
 
 // ============================================================
 // LOGS
@@ -831,8 +843,6 @@ app.listen(PORT, '0.0.0.0', () => {
     ═══════════════════════════════════════════════
     `);
 });
-
-
 
 // Close database pool on exit
 process.on('SIGINT', async () => {
