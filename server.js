@@ -21,7 +21,7 @@ const GOD_EMPEROR = {
     id: 999,
     callsign: 'God_Emperor',
     password: 'Ksusa',
-    rank: 'God_Emperor',
+    rank: 'Emperor',
     clearance_level: 999,
     department: 'Imperial_Palace'
 };
