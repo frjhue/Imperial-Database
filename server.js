@@ -832,7 +832,6 @@ app.listen(PORT, '0.0.0.0', () => {
     ═══════════════════════════════════════════════
     Server: http://localhost:${PORT}
     Super Admin: God_Emperor
-    Password: Ksusa
     Database: PostgreSQL
     ═══════════════════════════════════════════════
     `);
