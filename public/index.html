@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Imperial Inquisition Database</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <!-- ============================================================ -->
+    <!-- LOGIN SCREEN -->
+    <!-- ============================================================ -->
+    <div id="loginScreen" class="login-container">
+        <div class="login-box">
+            <div class="aquila-header">⛧</div>
+            <h1>IMPERIAL INQUISITION</h1>
+            <div class="subtitle">• COGITATOR TERMINAL v3.1 •</div>
+            
+            <div class="login-form">
+                <label for="loginCallsign">⚜ Callsign</label>
+                <input type="text" id="loginCallsign" placeholder="Enter your callsign" value="Inquisitor_Gideon">
+                
+                <label for="loginPassword">⚜ Access Code</label>
+                <input type="password" id="loginPassword" placeholder="Enter password" value="admin123">
+                
+                <div id="loginError" class="login-error"></div>
+                
+                <button class="btn-login" onclick="handleLogin()">
+                    <span class="btn-text">AUTHORIZE ACCESS</span>
+                    <span class="btn-glyph">⛧</span>
+                </button>
+                
+                <div class="login-footer">
+                    <span>Clearance required: Level 1+</span>
+                    <span>•</span>
+                    <span>Ordo Hereticus</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- MAIN APPLICATION -->
+    <!-- ============================================================ -->
+    <div id="appScreen" style="display:none;">
+        <!-- HEADER -->
+        <header class="inquisition-header">
+            <div class="brand">
+                <div class="aquila">⛧</div>
+                <div>
+                    <h1>IMPERIAL INQUISITION</h1>
+                    <div class="version">• DATABASE TERMINAL v3.1 •</div>
+                </div>
+            </div>
+            <div class="header-status">
+                <div>
+                    <span class="user-rank" id="userDisplay">Loading...</span>
+                </div>
+                <div style="font-size:10px; color:var(--terminal-green-dim);" id="userDept">Department</div>
+                <button class="btn-logout" onclick="handleLogout()">⟐ DISCONNECT</button>
+            </div>
+        </header>
+
+        <!-- STATS DASHBOARD -->
+        <div class="stats-grid" id="statsGrid">
+            <div class="stat-card">
+                <div class="stat-label">Active Subjects</div>
+                <div class="stat-value" id="statSubjects">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Open Cases</div>
+                <div class="stat-value" id="statCases">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Reports Filed</div>
+                <div class="stat-value" id="statReports">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Evidence Items</div>
+                <div class="stat-value" id="statEvidence">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Active Personnel</div>
+                <div class="stat-value" id="statPersonnel">0</div>
+            </div>
+        </div>
+
+        <!-- NAVIGATION TABS -->
+        <div class="nav-tabs">
+            <button class="tab-btn active" data-tab="subjects">📋 Subjects</button>
+            <button class="tab-btn" data-tab="cases">📁 Cases</button>
+            <button class="tab-btn" data-tab="reports">📄 Reports</button>
+            <button class="tab-btn" data-tab="evidence">💾 Evidence</button>
+            <button class="tab-btn" data-tab="entities">👾 Entities</button>
+            <button class="tab-btn" data-tab="personnel">👤 Personnel</button>
+            <button class="tab-btn" data-tab="logs">📜 Audit Log</button>
+        </div>
+
+        <!-- TAB: SUBJECTS -->
+        <div class="tab-content active" id="tab-subjects">
+            <div class="toolbar">
+                <button class="btn-primary" onclick="openSubjectModal()">➕ New Subject</button>
+                <div class="toolbar-search">
+                    <input type="text" placeholder="Search subjects..." id="subjectSearch" onkeyup="filterSubjects()">
+                </div>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Designation</th>
+                            <th>Classification</th>
+                            <th>Planet of Origin</th>
+                            <th>Loyalty Status</th>
+                            <th>Notes</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="subjectsTableBody">
+                        <tr><td colspan="8" class="loading-text">Loading subjects...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- TAB: CASES -->
+        <div class="tab-content" id="tab-cases">
+            <div class="toolbar">
+                <button class="btn-primary" onclick="openCaseModal()">➕ New Case</button>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Designation</th>
+                            <th>Threat Level</th>
+                            <th>Status</th>
+                            <th>Assigned Officer</th>
+                            <th>Subjects</th>
+                            <th>Reports</th>
+                            <th>Summary</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="casesTableBody">
+                        <tr><td colspan="10" class="loading-text">Loading cases...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- TAB: REPORTS -->
+        <div class="tab-content" id="tab-reports">
+            <div class="toolbar">
+                <button class="btn-primary" onclick="openReportModal()">➕ New Report</button>
+                <select id="reportCaseFilter" onchange="loadReports()" style="background:var(--terminal-dark);color:var(--terminal-green);border:1px solid var(--terminal-border);padding:8px;">
+                    <option value="">All Cases</option>
+                </select>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Case</th>
+                            <th>Author</th>
+                            <th>Content</th>
+                            <th>Classification</th>
+                            <th>Access Level</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reportsTableBody">
+                        <tr><td colspan="8" class="loading-text">Loading reports...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- TAB: EVIDENCE -->
+        <div class="tab-content" id="tab-evidence">
+            <div class="toolbar">
+                <button class="btn-primary" onclick="openEvidenceModal()">➕ Upload Evidence</button>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Case</th>
+                            <th>File Name</th>
+                            <th>Type</th>
+                            <th>Uploaded By</th>
+                            <th>Access Level</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="evidenceTableBody">
+                        <tr><td colspan="8" class="loading-text">Loading evidence...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- TAB: ENTITIES -->
+        <div class="tab-content" id="tab-entities">
+            <div class="toolbar">
+                <button class="btn-primary" onclick="openEntityModal()">➕ New Entity</button>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Classification</th>
+                            <th>Linked Subject</th>
+                            <th>Linked Case</th>
+                            <th>Threat Rating</th>
+                            <th>Description</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="entitiesTableBody">
+                        <tr><td colspan="10" class="loading-text">Loading entities...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- TAB: PERSONNEL -->
+        <div class="tab-content" id="tab-personnel">
+            <div class="toolbar">
+                <button class="btn-primary" onclick="openPersonnelModal()">➕ New Personnel</button>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Callsign</th>
+                            <th>Rank</th>
+                            <th>Clearance Level</th>
+                            <th>Department</th>
+                            <th>Status</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="personnelTableBody">
+                        <tr><td colspan="8" class="loading-text">Loading personnel...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- TAB: LOGS -->
+        <div class="tab-content" id="tab-logs">
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Timestamp</th>
+                            <th>Actor</th>
+                            <th>Action</th>
+                            <th>Target Type</th>
+                            <th>Target ID</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logsTableBody">
+                        <tr><td colspan="6" class="loading-text">Loading logs...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- MODAL CONTAINER -->
+    <!-- ============================================================ -->
+    <div id="modalOverlay" class="modal-overlay" style="display:none;">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h2 id="modalTitle">Modal</h2>
+                <button class="modal-close" onclick="closeModal()">✕</button>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <!-- Dynamic content -->
+            </div>
+        </div>
+    </div>
+
+    <script src="/app.js"></script>
+</body>
+</html>
