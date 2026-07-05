@@ -234,7 +234,13 @@ app.post('/api/auth/login', async (req, res) => {
         const person = result.rows[0];
         console.log('DEBUG - person found:', person ? person.callsign : 'NONE');
         console.log('DEBUG - stored hash:', person ? person.password_hash : 'N/A');
+        
+        console.log(password);
+console.log(password.length);
+console.log([...password].map(c => c.charCodeAt(0)));
 
+console.log(person.password_hash);
+console.log(person.password_hash.length);
         const passwordMatches = person && await bcrypt.compare(password, person.password_hash);
         console.log('DEBUG - passwordMatches:', passwordMatches);
 
