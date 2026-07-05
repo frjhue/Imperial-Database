@@ -1,7 +1,7 @@
 // ============================================================
 // IMPERIAL INQUISITION DATABASE - FRONTEND APPLICATION
 // ============================================================
-
+const API_BASE = window.location.origin;
 let currentUser = null;
 let authToken = null;
 let currentModalCallback = null;
@@ -23,7 +23,7 @@ async function apiRequest(endpoint, method = 'GET', data = null) {
     }
     
     try {
-        const response = await fetch(`/api${endpoint}`, options);
+        const response = await fetch(`${API_BASE}/api${endpoint}`, options);
         const result = await response.json();
         
         if (!response.ok) {
@@ -54,7 +54,7 @@ async function handleLogin() {
     }
     
     try {
-        const response = await fetch('/api/auth/login', {
+        const response = await fetch(`${API_BASE}/api/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ callsign, password })
