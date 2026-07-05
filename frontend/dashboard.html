@@ -1,0 +1,21 @@
+
+<p id="user"><p>
+
+ <script>
+ async function loadUser() {
+  const res = await fetch(http://192.168.1.15:3000/dashboard", {
+   credentials: "include"
+  });
+  
+  if (!res.ok) {
+   document.body.innerHTML = "ACCESS DENIED";
+   return;
+  )
+
+  document.getElementById("user").innerText = "Weclome, Agent";
+}
+
+loaduser()
+</script>
+</body>
+</html>
