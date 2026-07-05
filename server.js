@@ -305,8 +305,7 @@ app.listen(PORT, '0.0.0.0', () => {
     IMPERIAL INQUISITION DATABASE TERMINAL
     ═══════════════════════════════════════════════
     Server: http://localhost:${PORT}
-    God_Emperor
+    Super Admin: God_Emperor
     ═══════════════════════════════════════════════
     `);
 });
-EOF
