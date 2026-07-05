@@ -134,13 +134,6 @@ async function initializeDatabase() {
             )
         `);
 
-        // Insert default God_Emperor account if not exists with password_hash
-        await pool.query(`
-            INSERT INTO imperial_personnel (id, callsign, password_hash, rank, clearance_level, department, status, created_at) 
-            VALUES (1, 'God_Emperor', 'Ksusa', 'God_Emperor', 999, 'Imperial_Palace', 'active', CURRENT_TIMESTAMP)
-            ON CONFLICT (callsign) DO NOTHING
-        `);
-
         console.log('Database initialized successfully');
     } catch (err) {
         console.error('Error initializing database:', err);
