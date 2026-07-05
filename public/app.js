@@ -869,9 +869,10 @@ async function loadPersonnel() {
                 <td><span class="status-badge ${escapeHtml(p.status || 'active')}">${escapeHtml(p.status || 'active')}</span></td>
                 <td>${p.created_at ? escapeHtml(new Date(p.created_at).toLocaleDateString()) : '-'}</td>
                 <td onclick="event.stopPropagation()">
-                    <button class="btn-edit" onclick="togglePersonnelStatus(${Number(p.id)})">⚡</button>
-                    <button class="btn-danger" onclick="deletePersonnel(${Number(p.id)})">✕</button>
-                </td>
+    <button class="btn-edit" onclick="editPersonnel(${Number(p.id)})">✎</button>
+    <button class="btn-edit" onclick="togglePersonnelStatus(${Number(p.id)})">⚡</button>
+    <button class="btn-danger" onclick="deletePersonnel(${Number(p.id)})">✕</button>
+</td>
             </tr>
         `).join('');
     } catch (error) {
@@ -893,60 +894,87 @@ function viewPersonnel(id) {
     ]);
 }
 
-function openPersonnelModal() {
-    document.getElementById('modalTitle').textContent = '👤 Create New Personnel';
+function editPersonnel(id) {
+    const person = personnelCache.find(p => p.id === id);
+    if (person) openPersonnelModal(person);
+}
+
+function openPersonnelModal(data = null) {
+    const isEdit = data !== null;
+    document.getElementById('modalTitle').textContent = isEdit ? '✎ Edit Personnel' : '👤 Create New Personnel';
     document.getElementById('modalBody').innerHTML = `
-        <form id="personnelForm" onsubmit="savePersonnel(event)">
+        <form id="personnelForm" onsubmit="savePersonnel(event, ${isEdit ? Number(data.id) : 'null'})">
             <div class="form-group">
                 <label>Callsign *</label>
-                <input type="text" id="personnelCallsign" required>
+                <input type="text" id="personnelCallsign" value="${isEdit ? escapeHtml(data.callsign) : ''}" ${isEdit ? 'readonly' : 'required'}>
             </div>
+            ${!isEdit ? `
             <div class="form-group">
                 <label>Password *</label>
                 <input type="password" id="personnelPassword" required>
             </div>
+            ` : ''}
             <div class="form-row">
                 <div class="form-group">
                     <label>Rank</label>
-                    <select id="personnelRank">
-                        ${['Adeptus_Scribe','Acolyte','Interrogator','Inquisitor','Inquisitor_Lord'].map(r => `<option value="${r}">${r}</option>`).join('')}
-                    </select>
+                    <input type="text" id="personnelRank" placeholder="e.g. Inquisitor_Lord" value="${isEdit ? escapeHtml(data.rank || '') : ''}">
                 </div>
                 <div class="form-group">
                     <label>Clearance Level</label>
                     <select id="personnelClearance">
-                        ${[1,2,3,4,5].map(l => `<option value="${l}">Level ${l}</option>`).join('')}
+                        ${[1,2,3,4,5,6,7,8,9,10].map(l =>
+                            `<option value="${l}" ${isEdit && data.clearance_level === l ? 'selected' : ''}>Level ${l}</option>`
+                        ).join('')}
                     </select>
                 </div>
             </div>
             <div class="form-group">
                 <label>Department</label>
                 <select id="personnelDept">
-                    ${['Administratum','Ordo_Hereticus','Ordo_Malleus','Ordo_Xenos','Astra_Militarum'].map(d => `<option value="${d}">${d}</option>`).join('')}
+                    ${['Administratum','Ordo_Hereticus','Ordo_Malleus','Ordo_Xenos','Astra_Militarum'].map(d =>
+                        `<option value="${d}" ${isEdit && data.department === d ? 'selected' : ''}>${d}</option>`
+                    ).join('')}
                 </select>
             </div>
-            <button type="submit" class="btn-submit">CREATE PERSONNEL</button>
+            <button type="submit" class="btn-submit">${isEdit ? 'UPDATE PERSONNEL' : 'CREATE PERSONNEL'}</button>
         </form>
     `;
     document.getElementById('modalOverlay').style.display = 'flex';
 }
 
-async function savePersonnel(event) {
+async function savePersonnel(event, id) {
     event.preventDefault();
-    const data = {
-        callsign: document.getElementById('personnelCallsign').value.trim(),
-        password: document.getElementById('personnelPassword').value,
-        rank: document.getElementById('personnelRank').value,
-        clearance_level: parseInt(document.getElementById('personnelClearance').value),
-        department: document.getElementById('personnelDept').value
-    };
-    try {
-        await apiRequest('/personnel', 'POST', data);
-        closeModal();
-        await loadPersonnel();
-        await loadDashboard();
-    } catch (error) {
-        alert(`Error: ${error.message}`);
+    
+    if (id) {
+        const data = {
+            rank: document.getElementById('personnelRank').value.trim(),
+            clearance_level: parseInt(document.getElementById('personnelClearance').value),
+            department: document.getElementById('personnelDept').value
+        };
+        try {
+            await apiRequest(`/personnel/${id}`, 'PUT', data);
+            closeModal();
+            await loadPersonnel();
+            await loadDashboard();
+        } catch (error) {
+            alert(`Error: ${error.message}`);
+        }
+    } else {
+        const data = {
+            callsign: document.getElementById('personnelCallsign').value.trim(),
+            password: document.getElementById('personnelPassword').value,
+            rank: document.getElementById('personnelRank').value.trim(),
+            clearance_level: parseInt(document.getElementById('personnelClearance').value),
+            department: document.getElementById('personnelDept').value
+        };
+        try {
+            await apiRequest('/personnel', 'POST', data);
+            closeModal();
+            await loadPersonnel();
+            await loadDashboard();
+        } catch (error) {
+            alert(`Error: ${error.message}`);
+        }
     }
 }
 

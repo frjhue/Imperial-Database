@@ -728,32 +728,51 @@ app.get('/api/personnel/:id', authenticate, async (req, res) => {
 });
 
 app.post('/api/personnel', authenticate, requireClearance(900), async (req, res) => {
-    const { callsign, password, rank, department } = req.body;
-
+    const { callsign, password, rank, department, clearance_level } = req.body;
+    
     if (!callsign || !password) {
         return res.status(400).json({ error: 'Callsign and password are required' });
     }
-
+    
     try {
-        // Check if callsign exists
         const existing = await pool.query('SELECT id FROM imperial_personnel WHERE callsign = $1', [callsign]);
         if (existing.rows.length > 0) {
             return res.status(409).json({ error: 'That callsign is already in use' });
         }
-
-        // Fixed clearance level to 10 and rank is now a free text field
-        const clearance_level = 10;
-
-        // Hash the password before storing it
+        
+        const finalClearance = Math.min(Math.max(parseInt(clearance_level) || 1, 1), 10);
         const password_hash = await bcrypt.hash(password, 10);
 
         const result = await pool.query(
             'INSERT INTO imperial_personnel (callsign, password_hash, rank, clearance_level, department, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, callsign, rank, clearance_level, department, status, created_at',
-            [callsign, password_hash, rank || 'Inquisitor', clearance_level, department || 'Unknown', 'active', new Date().toISOString()]
+            [callsign, password_hash, rank || 'Inquisitor', finalClearance, department || 'Unknown', 'active', new Date().toISOString()]
+        );
+        
+        await logAction('CREATE_PERSONNEL', req.user.callsign, `Callsign: ${callsign} | Clearance: ${finalClearance}`);
+        res.status(201).json(result.rows[0]);
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/personnel/:id', authenticate, requireClearance(900), async (req, res) => {
+    const id = req.params.id;
+    const { rank, department, clearance_level } = req.body;
+
+    try {
+        const finalClearance = Math.min(Math.max(parseInt(clearance_level) || 1, 1), 10);
+
+        const result = await pool.query(
+            'UPDATE imperial_personnel SET rank = $1, department = $2, clearance_level = $3 WHERE id = $4 RETURNING id, callsign, rank, clearance_level, department, status, created_at',
+            [rank, department, finalClearance, id]
         );
 
-        await logAction('CREATE_PERSONNEL', req.user.callsign, `Callsign: ${callsign} | Clearance: ${clearance_level}`);
-        res.status(201).json(result.rows[0]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Personnel not found' });
+        }
+
+        await logAction('UPDATE_PERSONNEL', req.user.callsign, `ID: ${id} | Clearance: ${finalClearance}`);
+        res.json(result.rows[0]);
     } catch (err) {
         return res.status(500).json({ error: err.message });
     }
