@@ -1,12 +1,9 @@
-# Generate SQL file with real hash
 node -e "
 const bcrypt = require('bcryptjs');
 const hash = bcrypt.hashSync('Ksusa', 10);
 const fs = require('fs');
 
-const sql = \`-- ============================================================
--- IMPERIAL INQUISITION DATABASE - GOD_EMPEROR SUPER ADMIN
--- ============================================================
+const sql = \`
 
 DROP TABLE IF EXISTS imperial_logs CASCADE;
 DROP TABLE IF EXISTS imperial_blueprints CASCADE;
