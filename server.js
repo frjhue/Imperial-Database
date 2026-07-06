@@ -4,6 +4,8 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
 const { Pool } = require('pg');
 
 const app = express();
@@ -27,6 +29,33 @@ const pool = new Pool({
     max: 20,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 2000,
+});
+
+// ============================================================
+// FILE UPLOADS (evidence images)
+// ============================================================
+const UPLOAD_DIR = path.join(__dirname, 'public', 'uploads');
+if (!fs.existsSync(UPLOAD_DIR)) {
+    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, UPLOAD_DIR),
+    filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname).toLowerCase();
+        const safeExt = ['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext) ? ext : '.bin';
+        cb(null, `evidence_${Date.now()}_${Math.round(Math.random() * 1e9)}${safeExt}`);
+    }
+});
+
+const upload = multer({
+    storage,
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+    fileFilter: (req, file, cb) => {
+        const allowed = /image\/(png|jpe?g|gif|webp)/;
+        if (allowed.test(file.mimetype)) cb(null, true);
+        else cb(new Error('Only image files are allowed for evidence uploads'));
+    }
 });
 
 // Test database connection
@@ -66,6 +95,7 @@ async function initializeDatabase() {
                 notes TEXT,
                 roblox_profile TEXT,
                 discord_userid TEXT,
+                access_level INTEGER DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP
             )
@@ -209,11 +239,6 @@ const authenticate = (req, res, next) => {
     }
 };
 
-// FIX: this helper was defined but never used anywhere in the
-// original file (the personnel routes duplicated the comparison
-// inline instead). It's now actually wired into requireClearance
-// below so there's a single source of truth for "does actor
-// outrank target" logic.
 function requireHigherClearance(targetClearance, actorClearance) {
     return actorClearance > targetClearance;
 }
@@ -228,11 +253,8 @@ function requireClearance(minLevel) {
     };
 }
 
-// FIX: dedicated middleware for "only the God_Emperor account
-// may do this" — explicit and unambiguous, rather than relying
-// on a clearance threshold that happens to only be reachable by
-// account id 1 today. Any account, however high clearance, is
-// blocked unless it IS the super admin.
+// Only the God_Emperor (super admin, id === 1) account may perform
+// personnel-management actions and view the Personnel roster at all.
 function requireSuperAdmin(req, res, next) {
     if (req.user.id !== 1) {
         logAction('ACCESS_DENIED', req.user.callsign, 'Super admin required');
@@ -250,6 +272,9 @@ function buildUserResponse(person) {
         department: person.department
     };
 }
+
+// Maximum clearance level that can ever be granted to a non-super-admin account.
+const MAX_GRANTABLE_CLEARANCE = 11;
 
 // ============================================================
 // AUTH ENDPOINTS
@@ -344,12 +369,85 @@ app.get('/api/dashboard/stats', authenticate, async (req, res) => {
 });
 
 // ============================================================
+// GLOBAL CLASSIFIED SEARCH
+// Keyword search across cases, reports, evidence, subjects and
+// entities. Unlike the per-tab list endpoints (which redact the
+// sensitive body but still show the row), search results are
+// fully EXCLUDED if their access_level is above the requester's
+// clearance — above-clearance material should not even be
+// discoverable by keyword.
+// ============================================================
+app.get('/api/search', authenticate, async (req, res) => {
+    const q = (req.query.q || '').trim();
+    if (!q) return res.json({ subjects: [], casefiles: [], reports: [], evidence: [], entities: [] });
+
+    const like = `%${q}%`;
+    const clearance = req.user.clearance_level || 0;
+
+    try {
+        const [subjects, casefiles, reports, evidence, entities] = await Promise.all([
+            pool.query(
+                `SELECT * FROM imperial_subjects
+                 WHERE (access_level IS NULL OR access_level <= $2)
+                 AND (designation ILIKE $1 OR classification ILIKE $1 OR planet_of_origin ILIKE $1 OR loyalty_status ILIKE $1 OR notes ILIKE $1)
+                 ORDER BY id DESC LIMIT 50`,
+                [like, clearance]
+            ),
+            pool.query(
+                `SELECT * FROM imperial_casefiles
+                 WHERE (access_level IS NULL OR access_level <= $2)
+                 AND (designation ILIKE $1 OR threat_level ILIKE $1 OR summary ILIKE $1 OR content ILIKE $1)
+                 ORDER BY id DESC LIMIT 50`,
+                [like, clearance]
+            ),
+            pool.query(
+                `SELECT * FROM imperial_reports
+                 WHERE (access_level IS NULL OR access_level <= $2)
+                 AND (case_designation ILIKE $1 OR author_name ILIKE $1 OR content ILIKE $1 OR classification ILIKE $1)
+                 ORDER BY id DESC LIMIT 50`,
+                [like, clearance]
+            ),
+            pool.query(
+                `SELECT * FROM imperial_evidence
+                 WHERE (access_level IS NULL OR access_level <= $2)
+                 AND (file_name ILIKE $1 OR evidence_type ILIKE $1 OR case_designation ILIKE $1)
+                 ORDER BY id DESC LIMIT 50`,
+                [like, clearance]
+            ),
+            pool.query(
+                `SELECT * FROM imperial_entities
+                 WHERE (access_level IS NULL OR access_level <= $2)
+                 AND (entity_name ILIKE $1 OR entity_type ILIKE $1 OR classification ILIKE $1 OR description ILIKE $1)
+                 ORDER BY id DESC LIMIT 50`,
+                [like, clearance]
+            )
+        ]);
+
+        await logAction('CLASSIFIED_SEARCH', req.user.callsign, `Query: ${q}`);
+
+        res.json({
+            subjects: subjects.rows,
+            casefiles: casefiles.rows,
+            reports: reports.rows,
+            evidence: evidence.rows,
+            entities: entities.rows
+        });
+    } catch (err) {
+        return res.status(500).json({ error: 'Database error' });
+    }
+});
+
+// ============================================================
 // SUBJECTS CRUD
 // ============================================================
 app.get('/api/subjects', authenticate, async (req, res) => {
     await logAction('VIEW_SUBJECTS', req.user.callsign, 'List requested');
     try {
-        const result = await pool.query('SELECT * FROM imperial_subjects ORDER BY id DESC');
+        // Above-clearance subjects are excluded entirely rather than redacted.
+        const result = await pool.query(
+            'SELECT * FROM imperial_subjects WHERE (access_level IS NULL OR access_level <= $1) ORDER BY id DESC',
+            [req.user.clearance_level || 0]
+        );
         res.json(result.rows);
     } catch (err) {
         return res.status(500).json({ error: 'Database error' });
@@ -362,25 +460,25 @@ app.get('/api/subjects/:id', authenticate, async (req, res) => {
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Subject not found' });
         }
+        const subject = result.rows[0];
+        if ((subject.access_level || 0) > (req.user.clearance_level || 0)) {
+            await logAction('ACCESS_DENIED', req.user.callsign, `Subject ID: ${req.params.id} (insufficient clearance)`);
+            return res.status(404).json({ error: 'Subject not found' });
+        }
         await logAction('VIEW_SUBJECT', req.user.callsign, `ID: ${req.params.id}`);
-        res.json(result.rows[0]);
+        res.json(subject);
     } catch (err) {
         return res.status(500).json({ error: 'Database error' });
     }
 });
 
-// FIX: create/update/delete on subjects previously had no
-// clearance gate at all — any authenticated user (clearance 1+)
-// could mutate records. Added a low-bar requireClearance(2) so
-// basic accounts can still be created deliberately at level 1
-// as "read-only" if desired. Adjust the number to taste.
 app.post('/api/subjects', authenticate, requireClearance(2), async (req, res) => {
-    const { designation, classification, planet_of_origin, loyalty_status, notes, roblox_profile, discord_userid } = req.body;
+    const { designation, classification, planet_of_origin, loyalty_status, notes, roblox_profile, discord_userid, access_level } = req.body;
 
     try {
         const result = await pool.query(
-            'INSERT INTO imperial_subjects (designation, classification, planet_of_origin, loyalty_status, notes, roblox_profile, discord_userid, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-            [designation, classification, planet_of_origin, loyalty_status, notes, roblox_profile, discord_userid, new Date().toISOString()]
+            'INSERT INTO imperial_subjects (designation, classification, planet_of_origin, loyalty_status, notes, roblox_profile, discord_userid, access_level, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
+            [designation, classification, planet_of_origin, loyalty_status, notes, roblox_profile, discord_userid, access_level || 1, new Date().toISOString()]
         );
         await logAction('CREATE_SUBJECT', req.user.callsign, `Designation: ${designation}`);
         res.status(201).json(result.rows[0]);
@@ -391,12 +489,12 @@ app.post('/api/subjects', authenticate, requireClearance(2), async (req, res) =>
 
 app.put('/api/subjects/:id', authenticate, requireClearance(2), async (req, res) => {
     const id = req.params.id;
-    const { designation, classification, planet_of_origin, loyalty_status, notes, roblox_profile, discord_userid } = req.body;
+    const { designation, classification, planet_of_origin, loyalty_status, notes, roblox_profile, discord_userid, access_level } = req.body;
 
     try {
         const result = await pool.query(
-            'UPDATE imperial_subjects SET designation = $1, classification = $2, planet_of_origin = $3, loyalty_status = $4, notes = $5, roblox_profile = $6, discord_userid = $7, updated_at = $8 WHERE id = $9 RETURNING *',
-            [designation, classification, planet_of_origin, loyalty_status, notes, roblox_profile, discord_userid, new Date().toISOString(), id]
+            'UPDATE imperial_subjects SET designation = $1, classification = $2, planet_of_origin = $3, loyalty_status = $4, notes = $5, roblox_profile = $6, discord_userid = $7, access_level = $8, updated_at = $9 WHERE id = $10 RETURNING *',
+            [designation, classification, planet_of_origin, loyalty_status, notes, roblox_profile, discord_userid, access_level || 1, new Date().toISOString(), id]
         );
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Subject not found' });
@@ -428,7 +526,11 @@ app.delete('/api/subjects/:id', authenticate, requireClearance(2), async (req, r
 app.get('/api/casefiles', authenticate, async (req, res) => {
     await logAction('VIEW_CASES', req.user.callsign, 'List requested');
     try {
-        const result = await pool.query('SELECT * FROM imperial_casefiles ORDER BY id DESC');
+        // Above-clearance case files are excluded entirely rather than redacted.
+        const result = await pool.query(
+            'SELECT * FROM imperial_casefiles WHERE (access_level IS NULL OR access_level <= $1) ORDER BY id DESC',
+            [req.user.clearance_level || 0]
+        );
         res.json(result.rows);
     } catch (err) {
         return res.status(500).json({ error: 'Database error' });
@@ -442,11 +544,13 @@ app.get('/api/casefiles/:id', authenticate, async (req, res) => {
             return res.status(404).json({ error: 'Case not found' });
         }
         const casefile = result.rows[0];
-        await logAction('VIEW_CASE', req.user.callsign, `ID: ${req.params.id}`);
 
         if ((casefile.access_level || 0) > (req.user.clearance_level || 0)) {
-            return res.json({ ...casefile, content: null, redacted: true });
+            await logAction('ACCESS_DENIED', req.user.callsign, `Case ID: ${req.params.id} (insufficient clearance)`);
+            return res.status(404).json({ error: 'Case not found' });
         }
+
+        await logAction('VIEW_CASE', req.user.callsign, `ID: ${req.params.id}`);
         res.json(casefile);
     } catch (err) {
         return res.status(500).json({ error: 'Database error' });
@@ -511,23 +615,17 @@ app.get('/api/reports', authenticate, async (req, res) => {
     await logAction('VIEW_REPORTS', req.user.callsign, `Case ID: ${case_id || 'All'}`);
 
     try {
-        let query = 'SELECT * FROM imperial_reports';
-        const params = [];
+        let query = 'SELECT * FROM imperial_reports WHERE (access_level IS NULL OR access_level <= $1)';
+        const params = [req.user.clearance_level || 0];
         if (case_id) {
-            query += ' WHERE case_id = $1';
+            query += ' AND case_id = $2';
             params.push(parseInt(case_id));
         }
         query += ' ORDER BY id DESC';
 
         const result = await pool.query(query, params);
-
-        const scoped = result.rows.map(r => {
-            if ((r.access_level || 0) > (req.user.clearance_level || 0)) {
-                return { ...r, content: null, redacted: true };
-            }
-            return r;
-        });
-        res.json(scoped);
+        // Above-clearance reports are excluded entirely rather than redacted.
+        res.json(result.rows);
     } catch (err) {
         return res.status(500).json({ error: 'Database error' });
     }
@@ -540,11 +638,13 @@ app.get('/api/reports/:id', authenticate, async (req, res) => {
             return res.status(404).json({ error: 'Report not found' });
         }
         const report = result.rows[0];
-        await logAction('VIEW_REPORT', req.user.callsign, `ID: ${req.params.id}`);
 
         if ((report.access_level || 0) > (req.user.clearance_level || 0)) {
-            return res.json({ ...report, content: null, redacted: true });
+            await logAction('ACCESS_DENIED', req.user.callsign, `Report ID: ${req.params.id} (insufficient clearance)`);
+            return res.status(404).json({ error: 'Report not found' });
         }
+
+        await logAction('VIEW_REPORT', req.user.callsign, `ID: ${req.params.id}`);
         res.json(report);
     } catch (err) {
         return res.status(500).json({ error: 'Database error' });
@@ -560,9 +660,6 @@ app.post('/api/reports', authenticate, requireClearance(2), async (req, res) => 
         const case_designation = caseResult.rows.length > 0 ? caseResult.rows[0].designation : `Case_${case_id}`;
 
         const result = await pool.query(
-            // FIX: access_level now falls back to 1 instead of
-            // inserting an explicit NULL that overrides the
-            // column's DEFAULT 1 when the client omits it.
             'INSERT INTO imperial_reports (case_id, case_designation, author_name, content, classification, access_level, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
             [case_id, case_designation, req.user.callsign, content, classification, access_level || 1, new Date().toISOString()]
         );
@@ -592,20 +689,17 @@ app.delete('/api/reports/:id', authenticate, requireClearance(2), async (req, re
 });
 
 // ============================================================
-// EVIDENCE CRUD
+// EVIDENCE CRUD (image uploads)
 // ============================================================
 app.get('/api/evidence', authenticate, async (req, res) => {
     await logAction('VIEW_EVIDENCE', req.user.callsign, 'List requested');
     try {
-        const result = await pool.query('SELECT * FROM imperial_evidence ORDER BY id DESC');
-
-        const scoped = result.rows.map(e => {
-            if ((e.access_level || 0) > (req.user.clearance_level || 0)) {
-                return { ...e, storage_path: null, redacted: true };
-            }
-            return e;
-        });
-        res.json(scoped);
+        // Above-clearance evidence is excluded entirely rather than redacted.
+        const result = await pool.query(
+            'SELECT * FROM imperial_evidence WHERE (access_level IS NULL OR access_level <= $1) ORDER BY id DESC',
+            [req.user.clearance_level || 0]
+        );
+        res.json(result.rows);
     } catch (err) {
         return res.status(500).json({ error: 'Database error' });
     }
@@ -618,32 +712,43 @@ app.get('/api/evidence/:id', authenticate, async (req, res) => {
             return res.status(404).json({ error: 'Evidence not found' });
         }
         const item = result.rows[0];
-        await logAction('VIEW_EVIDENCE_ITEM', req.user.callsign, `ID: ${req.params.id}`);
 
         if ((item.access_level || 0) > (req.user.clearance_level || 0)) {
-            return res.json({ ...item, storage_path: null, redacted: true });
+            await logAction('ACCESS_DENIED', req.user.callsign, `Evidence ID: ${req.params.id} (insufficient clearance)`);
+            return res.status(404).json({ error: 'Evidence not found' });
         }
+
+        await logAction('VIEW_EVIDENCE_ITEM', req.user.callsign, `ID: ${req.params.id}`);
         res.json(item);
     } catch (err) {
         return res.status(500).json({ error: 'Database error' });
     }
 });
 
-app.post('/api/evidence', authenticate, requireClearance(2), async (req, res) => {
-    const { case_id, file_name, storage_path, evidence_type, access_level } = req.body;
+// Evidence is now uploaded as an actual image file (multipart/form-data)
+// instead of the client typing in an arbitrary storage path.
+app.post('/api/evidence', authenticate, requireClearance(2), upload.single('image'), async (req, res) => {
+    const { case_id, evidence_type, access_level } = req.body;
+
+    if (!req.file) {
+        return res.status(400).json({ error: 'An image file is required' });
+    }
 
     try {
         const caseResult = await pool.query('SELECT designation FROM imperial_casefiles WHERE id = $1', [case_id]);
         const case_designation = caseResult.rows.length > 0 ? caseResult.rows[0].designation : `Case_${case_id}`;
 
+        const storage_path = `/uploads/${req.file.filename}`;
+
         const result = await pool.query(
-            // FIX: same NULL-vs-DEFAULT issue as reports, patched here too.
             'INSERT INTO imperial_evidence (case_id, case_designation, file_name, storage_path, evidence_type, uploaded_by_name, access_level, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-            [case_id, case_designation, file_name, storage_path, evidence_type, req.user.callsign, access_level || 1, new Date().toISOString()]
+            [case_id, case_designation, req.file.originalname, storage_path, evidence_type, req.user.callsign, access_level || 1, new Date().toISOString()]
         );
-        await logAction('UPLOAD_EVIDENCE', req.user.callsign, `File: ${file_name}`);
+        await logAction('UPLOAD_EVIDENCE', req.user.callsign, `File: ${req.file.originalname}`);
         res.status(201).json(result.rows[0]);
     } catch (err) {
+        // Clean up the uploaded file if the DB insert failed
+        fs.unlink(req.file.path, () => {});
         return res.status(500).json({ error: err.message });
     }
 });
@@ -651,9 +756,14 @@ app.post('/api/evidence', authenticate, requireClearance(2), async (req, res) =>
 app.delete('/api/evidence/:id', authenticate, requireClearance(2), async (req, res) => {
     const id = req.params.id;
     try {
+        const existing = await pool.query('SELECT storage_path FROM imperial_evidence WHERE id = $1', [id]);
         const result = await pool.query('DELETE FROM imperial_evidence WHERE id = $1 RETURNING id', [id]);
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Evidence not found' });
+        }
+        if (existing.rows[0]?.storage_path) {
+            const filePath = path.join(__dirname, 'public', existing.rows[0].storage_path);
+            fs.unlink(filePath, () => {});
         }
         await logAction('DELETE_EVIDENCE', req.user.callsign, `ID: ${id}`);
         res.json({ message: `Evidence ${id} deleted` });
@@ -668,7 +778,11 @@ app.delete('/api/evidence/:id', authenticate, requireClearance(2), async (req, r
 app.get('/api/entities', authenticate, async (req, res) => {
     await logAction('VIEW_ENTITIES', req.user.callsign, 'List requested');
     try {
-        const result = await pool.query('SELECT * FROM imperial_entities ORDER BY id DESC');
+        // Above-clearance entities are excluded entirely rather than redacted.
+        const result = await pool.query(
+            'SELECT * FROM imperial_entities WHERE (access_level IS NULL OR access_level <= $1) ORDER BY id DESC',
+            [req.user.clearance_level || 0]
+        );
         res.json(result.rows);
     } catch (err) {
         return res.status(500).json({ error: 'Database error' });
@@ -681,8 +795,13 @@ app.get('/api/entities/:id', authenticate, async (req, res) => {
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Entity not found' });
         }
+        const entity = result.rows[0];
+        if ((entity.access_level || 0) > (req.user.clearance_level || 0)) {
+            await logAction('ACCESS_DENIED', req.user.callsign, `Entity ID: ${req.params.id} (insufficient clearance)`);
+            return res.status(404).json({ error: 'Entity not found' });
+        }
         await logAction('VIEW_ENTITY', req.user.callsign, `ID: ${req.params.id}`);
-        res.json(result.rows[0]);
+        res.json(entity);
     } catch (err) {
         return res.status(500).json({ error: 'Database error' });
     }
@@ -732,9 +851,11 @@ app.delete('/api/entities/:id', authenticate, requireClearance(2), async (req, r
 });
 
 // ============================================================
-// PERSONNEL / ACCOUNTS (admin-only management)
+// PERSONNEL / ACCOUNTS
+// Personnel tab is super-admin (God_Emperor, id === 1) only —
+// both viewing the roster and managing accounts.
 // ============================================================
-app.get('/api/personnel', authenticate, async (req, res) => {
+app.get('/api/personnel', authenticate, requireSuperAdmin, async (req, res) => {
     await logAction('VIEW_PERSONNEL', req.user.callsign, 'List requested');
     try {
         // Exclude password_hash from results
@@ -747,7 +868,7 @@ app.get('/api/personnel', authenticate, async (req, res) => {
     }
 });
 
-app.get('/api/personnel/:id', authenticate, async (req, res) => {
+app.get('/api/personnel/:id', authenticate, requireSuperAdmin, async (req, res) => {
     try {
         // Exclude password_hash from results
         const result = await pool.query(
@@ -776,9 +897,8 @@ app.post('/api/personnel', authenticate, requireSuperAdmin, async (req, res) => 
             return res.status(409).json({ error: 'That callsign is already in use' });
         }
         
-        const requestedClearance = Math.min(Math.max(parseInt(clearance_level) || 1, 1), 10);
+        const requestedClearance = Math.min(Math.max(parseInt(clearance_level) || 1, 1), MAX_GRANTABLE_CLEARANCE);
 
-        // FIX: now reuses requireHigherClearance instead of a raw inline comparison.
         if (!requireHigherClearance(requestedClearance, req.user.clearance_level)) {
             return res.status(403).json({ error: `You cannot grant a clearance level equal to or higher than your own (${req.user.clearance_level})` });
         }
@@ -799,19 +919,36 @@ app.post('/api/personnel', authenticate, requireSuperAdmin, async (req, res) => 
 
 app.put('/api/personnel/:id', authenticate, requireSuperAdmin, async (req, res) => {
     const id = req.params.id;
-    const { rank, department, clearance_level } = req.body;
+    const { rank, department, clearance_level, callsign } = req.body;
+    const isSelf = parseInt(id) === req.user.id;
 
     try {
-        const targetResult = await pool.query('SELECT clearance_level FROM imperial_personnel WHERE id = $1', [id]);
+        const targetResult = await pool.query('SELECT id, callsign, clearance_level FROM imperial_personnel WHERE id = $1', [id]);
         if (targetResult.rows.length === 0) {
             return res.status(404).json({ error: 'Personnel not found' });
         }
 
-        const requestedClearance = Math.min(Math.max(parseInt(clearance_level) || 1, 1), 10);
+        // The super admin may edit their OWN callsign and rank. Editing
+        // someone else's callsign is not allowed — only rank/department/
+        // clearance for other accounts.
+        let newCallsign = targetResult.rows[0].callsign;
+        if (isSelf && callsign && callsign.trim()) {
+            const dupe = await pool.query('SELECT id FROM imperial_personnel WHERE callsign = $1 AND id != $2', [callsign.trim(), id]);
+            if (dupe.rows.length > 0) {
+                return res.status(409).json({ error: 'That callsign is already in use' });
+            }
+            newCallsign = callsign.trim();
+        }
+
+        // Super admin's own clearance can never be capped/downgraded via this
+        // endpoint by accident; for everyone else, cap at MAX_GRANTABLE_CLEARANCE.
+        const requestedClearance = isSelf
+            ? (parseInt(clearance_level) || targetResult.rows[0].clearance_level)
+            : Math.min(Math.max(parseInt(clearance_level) || 1, 1), MAX_GRANTABLE_CLEARANCE);
 
         const result = await pool.query(
-            'UPDATE imperial_personnel SET rank = $1, department = $2, clearance_level = $3 WHERE id = $4 RETURNING id, callsign, rank, clearance_level, department, status, created_at',
-            [rank, department, requestedClearance, id]
+            'UPDATE imperial_personnel SET callsign = $1, rank = $2, department = $3, clearance_level = $4 WHERE id = $5 RETURNING id, callsign, rank, clearance_level, department, status, created_at',
+            [newCallsign, rank, department, requestedClearance, id]
         );
 
         await logAction('UPDATE_PERSONNEL', req.user.callsign, `ID: ${id} | Clearance: ${requestedClearance}`);
@@ -893,13 +1030,22 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// Multer error handler (file too large / wrong type) so uploads fail
+// gracefully with JSON instead of an HTML stack trace.
+app.use((err, req, res, next) => {
+    if (err instanceof multer.MulterError || err) {
+        return res.status(400).json({ error: err.message });
+    }
+    next();
+});
+
 // ============================================================
 // START SERVER
 // ============================================================
 app.listen(3000, '0.0.0.0', () => {
     console.log(`
-    ═══════════════════════════════════════════════t45
-    IMPERIAL INQUISITION DATABASE TERMINAL
+    ═══════════════════════════════════════════════
+    CENTRAL INTELLIGENCE ARCHIVE — CLASSIFIED TERMINAL
     ═══════════════════════════════════════════════
     Server: http://localhost:3000
     Super Admin: God_Emperor

@@ -14,18 +14,28 @@ function escapeHtml(value) {
         .replace(/'/g, '&#039;');
 }
 
+function isSuperAdmin() {
+    return !!currentUser && currentUser.id === 1;
+}
+
 // ============================================================
 // API HELPER
 // ============================================================
-async function apiRequest(endpoint, method = 'GET', data = null) {
+async function apiRequest(endpoint, method = 'GET', data = null, isFormData = false) {
     const options = {
         method,
         headers: {
-            'Content-Type': 'application/json',
             'Authorization': `Bearer ${authToken}`
         }
     };
-    if (data) options.body = JSON.stringify(data);
+    if (data) {
+        if (isFormData) {
+            options.body = data; // browser sets multipart content-type incl. boundary
+        } else {
+            options.headers['Content-Type'] = 'application/json';
+            options.body = JSON.stringify(data);
+        }
+    }
 
     const response = await fetch(`/api${endpoint}`, options);
     const result = await response.json();
@@ -61,6 +71,17 @@ function showApp() {
     document.getElementById('appScreen').style.display = 'block';
     document.getElementById('userDisplay').textContent = `${currentUser.rank} ${currentUser.callsign}`;
     document.getElementById('userDept').textContent = `Department: ${currentUser.department} • Clearance: Level ${currentUser.clearance_level}`;
+
+    // Personnel tab is only visible to the super admin account.
+    const personnelTabBtn = document.querySelector('.tab-btn[data-tab="personnel"]');
+    const personnelTabContent = document.getElementById('tab-personnel');
+    if (!isSuperAdmin()) {
+        if (personnelTabBtn) personnelTabBtn.style.display = 'none';
+        if (personnelTabContent) personnelTabContent.classList.remove('active');
+    } else {
+        if (personnelTabBtn) personnelTabBtn.style.display = '';
+    }
+
     refreshAll();
 }
 
@@ -71,7 +92,7 @@ function refreshAll() {
     loadReports();
     loadEvidence();
     loadEntities();
-    loadPersonnel();
+    if (isSuperAdmin()) loadPersonnel();
     loadLogs();
     loadCaseFilter();
 }
@@ -146,6 +167,7 @@ async function loadDashboard() {
 // ============================================================
 document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', function() {
+        if (this.dataset.tab === 'personnel' && !isSuperAdmin()) return;
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
         document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
         this.classList.add('active');
@@ -158,7 +180,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
             case 'reports': loadReports(); break;
             case 'evidence': loadEvidence(); break;
             case 'entities': loadEntities(); break;
-            case 'personnel': loadPersonnel(); break;
+            case 'personnel': if (isSuperAdmin()) loadPersonnel(); break;
             case 'logs': loadLogs(); break;
         }
     });
@@ -180,7 +202,7 @@ function showDetailModal(title, fields) {
 }
 
 // ============================================================
-// SEARCH HELPER (generic row filter)
+// SEARCH HELPER (generic row filter, per-tab)
 // ============================================================
 function filterTable(inputId, tbodyId) {
     const search = document.getElementById(inputId).value.toLowerCase();
@@ -189,6 +211,65 @@ function filterTable(inputId, tbodyId) {
         const text = row.textContent.toLowerCase();
         row.style.display = text.includes(search) ? '' : 'none';
     });
+}
+
+// ============================================================
+// GLOBAL CLASSIFIED KEYWORD SEARCH
+// Searches subjects, cases, reports, evidence and entities by
+// keyword. The server already excludes anything above the
+// requester's clearance level, so only records the user is
+// actually cleared to see will ever appear here.
+// ============================================================
+async function runGlobalSearch() {
+    const input = document.getElementById('globalSearchInput');
+    const resultsEl = document.getElementById('globalSearchResults');
+    const q = input.value.trim();
+
+    if (!q) {
+        resultsEl.innerHTML = '';
+        resultsEl.style.display = 'none';
+        return;
+    }
+
+    try {
+        const data = await apiRequest(`/search?q=${encodeURIComponent(q)}`);
+        const sections = [
+            ['📋 Subjects', data.subjects, s => `${s.designation || 'Unknown'} — ${s.classification || 'unclassified'}`],
+            ['📁 Cases', data.casefiles, c => `${c.designation || 'Unknown'} — ${c.threat_level || ''}`],
+            ['📄 Reports', data.reports, r => `${r.case_designation || ''} — ${(r.content || '').substring(0, 60)}`],
+            ['💾 Evidence', data.evidence, e => `${e.file_name || 'Unknown'} — ${e.case_designation || ''}`],
+            ['👾 Entities', data.entities, e => `${e.entity_name || 'Unknown'} — ${e.classification || ''}`]
+        ];
+
+        const totalResults = sections.reduce((sum, [, list]) => sum + (list ? list.length : 0), 0);
+
+        if (totalResults === 0) {
+            resultsEl.innerHTML = `<div class="loading-text">No results found within your clearance level.</div>`;
+        } else {
+            resultsEl.innerHTML = sections
+                .filter(([, list]) => list && list.length > 0)
+                .map(([label, list]) => `
+                    <div class="search-section">
+                        <div class="search-section-title">${label} (${list.length})</div>
+                        ${list.map(item => `<div class="search-result-row">${escapeHtml(typeof item === 'string' ? item : Object.values(item).join(' '))}</div>`).join('')}
+                    </div>
+                `).join('');
+
+            // Re-render properly using formatter functions
+            resultsEl.innerHTML = sections
+                .filter(([, list]) => list && list.length > 0)
+                .map(([label, list, fmt]) => `
+                    <div class="search-section">
+                        <div class="search-section-title">${label} (${list.length})</div>
+                        ${list.map(item => `<div class="search-result-row">${escapeHtml(fmt(item))}</div>`).join('')}
+                    </div>
+                `).join('');
+        }
+        resultsEl.style.display = 'block';
+    } catch (error) {
+        resultsEl.innerHTML = `<div class="loading-text">⚠ Search failed: ${escapeHtml(error.message)}</div>`;
+        resultsEl.style.display = 'block';
+    }
 }
 
 // ============================================================
@@ -211,7 +292,7 @@ async function loadSubjects() {
             <tr class="clickable-row" onclick="viewSubject(${Number(s.id)})">
                 <td>${escapeHtml(s.id ?? '-')}</td>
                 <td><strong>${escapeHtml(s.designation || 'Unknown')}</strong></td>
-                <td><span class="status-badge ${escapeHtml(s.classification || 'unknown')}">${escapeHtml(s.classification || 'unknown')}</span></td>
+                <td><span class="status-badge">${escapeHtml(s.classification || 'unknown')}</span></td>
                 <td>${escapeHtml(s.planet_of_origin || '-')}</td>
                 <td><span class="status-badge ${escapeHtml(s.loyalty_status || 'unknown')}">${escapeHtml(s.loyalty_status || 'unknown')}</span></td>
                 <td>${escapeHtml(s.roblox_profile || '-')}</td>
@@ -242,6 +323,7 @@ function viewSubject(id) {
         ['Roblox Profile', s.roblox_profile],
         ['Discord User ID', s.discord_userid],
         ['Notes', s.notes],
+        ['Access Level', s.access_level],
         ['Created', s.created_at ? new Date(s.created_at).toLocaleString() : '-']
     ]);
 }
@@ -258,11 +340,7 @@ function openSubjectModal(data = null) {
             <div class="form-row">
                 <div class="form-group">
                     <label>Classification</label>
-                    <select id="subjClassification">
-                        ${['civilian','military','noble','psyker','mutant','xenos','heretic','inquisitor','unknown'].map(c =>
-                            `<option value="${c}" ${isEdit && data.classification === c ? 'selected' : ''}>${c}</option>`
-                        ).join('')}
-                    </select>
+                    <input type="text" id="subjClassification" placeholder="e.g. civilian, psyker, xenos..." value="${isEdit ? escapeHtml(data.classification || '') : ''}">
                 </div>
                 <div class="form-group">
                     <label>Planet of Origin</label>
@@ -291,6 +369,12 @@ function openSubjectModal(data = null) {
                 <label>Notes</label>
                 <textarea id="subjNotes">${isEdit ? escapeHtml(data.notes || '') : ''}</textarea>
             </div>
+            <div class="form-group">
+                <label>Access / Clearance Level Required to View</label>
+                <select id="subjAccess">
+                    ${[1,2,3,4,5,6,7,8,9,10,11].map(l => `<option value="${l}" ${isEdit && data.access_level === l ? 'selected' : ''}>Level ${l}</option>`).join('')}
+                </select>
+            </div>
             <button type="submit" class="btn-submit">${isEdit ? 'UPDATE RECORD' : 'CREATE RECORD'}</button>
         </form>
     `;
@@ -301,12 +385,13 @@ async function saveSubject(event, id) {
     event.preventDefault();
     const data = {
         designation: document.getElementById('subjDesignation').value.trim(),
-        classification: document.getElementById('subjClassification').value,
+        classification: document.getElementById('subjClassification').value.trim(),
         planet_of_origin: document.getElementById('subjPlanet').value.trim(),
         loyalty_status: document.getElementById('subjLoyalty').value,
         roblox_profile: document.getElementById('subjRoblox').value.trim(),
         discord_userid: document.getElementById('subjDiscord').value.trim(),
-        notes: document.getElementById('subjNotes').value.trim()
+        notes: document.getElementById('subjNotes').value.trim(),
+        access_level: parseInt(document.getElementById('subjAccess').value) || 1
     };
     try {
         if (id) await apiRequest(`/subjects/${id}`, 'PUT', data);
@@ -386,6 +471,7 @@ function viewCase(id) {
         ['Linked Subjects', c.subject_count],
         ['Linked Reports', c.report_count],
         ['Summary', c.summary],
+        ['Access Level', c.access_level],
         ['Created', c.created_at ? new Date(c.created_at).toLocaleString() : '-']
     ]);
 }
@@ -425,6 +511,12 @@ function openCaseModal(data = null) {
                 <label>Summary</label>
                 <textarea id="caseSummary">${isEdit ? escapeHtml(data.summary || '') : ''}</textarea>
             </div>
+            <div class="form-group">
+                <label>Access / Clearance Level Required to View</label>
+                <select id="caseAccess">
+                    ${[1,2,3,4,5,6,7,8,9,10,11].map(l => `<option value="${l}" ${isEdit && data.access_level === l ? 'selected' : ''}>Level ${l}</option>`).join('')}
+                </select>
+            </div>
             <button type="submit" class="btn-submit">${isEdit ? 'UPDATE CASE' : 'CREATE CASE'}</button>
         </form>
     `;
@@ -438,7 +530,8 @@ async function saveCase(event, id) {
         threat_level: document.getElementById('caseThreat').value,
         status: document.getElementById('caseStatus').value,
         assigned_officer: parseInt(document.getElementById('caseOfficer').value) || null,
-        summary: document.getElementById('caseSummary').value.trim()
+        summary: document.getElementById('caseSummary').value.trim(),
+        access_level: parseInt(document.getElementById('caseAccess').value) || 1
     };
     try {
         if (id) await apiRequest(`/casefiles/${id}`, 'PUT', data);
@@ -553,7 +646,7 @@ function openReportModal() {
                 <div class="form-group">
                     <label>Access Level</label>
                     <select id="reportAccess">
-                        ${[1,2,3,4,5].map(l => `<option value="${l}">Level ${l}</option>`).join('')}
+                        ${[1,2,3,4,5,6,7,8,9,10,11].map(l => `<option value="${l}">Level ${l}</option>`).join('')}
                     </select>
                 </div>
             </div>
@@ -594,7 +687,7 @@ async function deleteReport(id) {
 }
 
 // ============================================================
-// EVIDENCE CRUD
+// EVIDENCE CRUD (image uploads)
 // ============================================================
 let evidenceCache = [];
 
@@ -611,7 +704,7 @@ async function loadEvidence() {
 
         tbody.innerHTML = evidenceList.map(e => `
             <tr class="clickable-row" onclick="viewEvidence(${Number(e.id)})">
-                <td>${escapeHtml(e.id ?? '-')}</td>
+                <td>${e.storage_path ? `<img src="${escapeHtml(e.storage_path)}" alt="thumb" style="width:40px;height:40px;object-fit:cover;border:1px solid var(--terminal-border);">` : '-'}</td>
                 <td>${escapeHtml(e.case_designation || e.case_id || '-')}</td>
                 <td>${escapeHtml(e.file_name || '-')}</td>
                 <td>${escapeHtml(e.evidence_type || '-')}</td>
@@ -630,15 +723,17 @@ async function loadEvidence() {
 function viewEvidence(id) {
     const e = evidenceCache.find(x => x.id === id);
     if (!e) return;
-    showDetailModal(`💾 Evidence: ${e.file_name}`, [
-        ['Case', e.case_designation],
-        ['File Name', e.file_name],
-        ['Storage Path', e.storage_path],
-        ['Type', e.evidence_type],
-        ['Uploaded By', e.uploaded_by_name],
-        ['Access Level', e.access_level],
-        ['Created', e.created_at ? new Date(e.created_at).toLocaleString() : '-']
-    ]);
+    document.getElementById('modalTitle').textContent = `💾 Evidence: ${e.file_name}`;
+    document.getElementById('modalBody').innerHTML = `
+        ${e.storage_path ? `<img src="${escapeHtml(e.storage_path)}" alt="evidence" style="max-width:100%; border:1px solid var(--terminal-border); margin-bottom:12px;">` : ''}
+        <div class="form-group"><label>Case</label><div>${escapeHtml(e.case_designation || '-')}</div></div>
+        <div class="form-group"><label>File Name</label><div>${escapeHtml(e.file_name || '-')}</div></div>
+        <div class="form-group"><label>Type</label><div>${escapeHtml(e.evidence_type || '-')}</div></div>
+        <div class="form-group"><label>Uploaded By</label><div>${escapeHtml(e.uploaded_by_name || '-')}</div></div>
+        <div class="form-group"><label>Access Level</label><div>${escapeHtml(e.access_level ?? '-')}</div></div>
+        <div class="form-group"><label>Created</label><div>${e.created_at ? escapeHtml(new Date(e.created_at).toLocaleString()) : '-'}</div></div>
+    `;
+    document.getElementById('modalOverlay').style.display = 'flex';
 }
 
 function openEvidenceModal() {
@@ -650,12 +745,8 @@ function openEvidenceModal() {
                 <input type="number" id="evidenceCaseId" required>
             </div>
             <div class="form-group">
-                <label>File Name *</label>
-                <input type="text" id="evidenceFileName" required>
-            </div>
-            <div class="form-group">
-                <label>Storage Path</label>
-                <input type="text" id="evidencePath" placeholder="/data/evidence/...">
+                <label>Evidence Image *</label>
+                <input type="file" id="evidenceImage" accept="image/png,image/jpeg,image/gif,image/webp" required>
             </div>
             <div class="form-row">
                 <div class="form-group">
@@ -667,7 +758,7 @@ function openEvidenceModal() {
                 <div class="form-group">
                     <label>Access Level</label>
                     <select id="evidenceAccess">
-                        ${[1,2,3,4,5].map(l => `<option value="${l}">Level ${l}</option>`).join('')}
+                        ${[1,2,3,4,5,6,7,8,9,10,11].map(l => `<option value="${l}">Level ${l}</option>`).join('')}
                     </select>
                 </div>
             </div>
@@ -679,15 +770,20 @@ function openEvidenceModal() {
 
 async function saveEvidence(event) {
     event.preventDefault();
-    const data = {
-        case_id: parseInt(document.getElementById('evidenceCaseId').value),
-        file_name: document.getElementById('evidenceFileName').value.trim(),
-        storage_path: document.getElementById('evidencePath').value.trim(),
-        evidence_type: document.getElementById('evidenceType').value,
-        access_level: parseInt(document.getElementById('evidenceAccess').value)
-    };
+    const fileInput = document.getElementById('evidenceImage');
+    if (!fileInput.files || fileInput.files.length === 0) {
+        alert('Please choose an image file');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('case_id', document.getElementById('evidenceCaseId').value);
+    formData.append('evidence_type', document.getElementById('evidenceType').value);
+    formData.append('access_level', document.getElementById('evidenceAccess').value);
+    formData.append('image', fileInput.files[0]);
+
     try {
-        await apiRequest('/evidence', 'POST', data);
+        await apiRequest('/evidence', 'POST', formData, true);
         closeModal();
         await loadEvidence();
         await loadDashboard();
@@ -728,7 +824,7 @@ async function loadEntities() {
                 <td>${escapeHtml(e.id ?? '-')}</td>
                 <td><strong>${escapeHtml(e.entity_name || 'Unknown')}</strong></td>
                 <td>${escapeHtml(e.entity_type || '-')}</td>
-                <td><span class="status-badge ${escapeHtml(e.classification || 'unknown')}">${escapeHtml(e.classification || 'unknown')}</span></td>
+                <td><span class="status-badge">${escapeHtml(e.classification || 'unknown')}</span></td>
                 <td>${escapeHtml(e.subject_name || '-')}</td>
                 <td>${escapeHtml(e.case_name || '-')}</td>
                 <td><span style="color: ${e.threat_rating >= 8 ? 'var(--terminal-red)' : e.threat_rating >= 5 ? 'var(--terminal-amber)' : 'var(--terminal-green)'}">${escapeHtml(e.threat_rating || 0)}/10</span></td>
@@ -754,6 +850,7 @@ function viewEntity(id) {
         ['Linked Case', e.case_name],
         ['Threat Rating', `${e.threat_rating}/10`],
         ['Description', e.description],
+        ['Access Level', e.access_level],
         ['Created', e.created_at ? new Date(e.created_at).toLocaleString() : '-']
     ]);
 }
@@ -775,9 +872,7 @@ function openEntityModal() {
                 </div>
                 <div class="form-group">
                     <label>Classification</label>
-                    <select id="entityClassification">
-                        ${['imperial','heretic','xenos','chaos','unknown'].map(c => `<option value="${c}">${c}</option>`).join('')}
-                    </select>
+                    <input type="text" id="entityClassification" placeholder="e.g. imperial, heretic, xenos...">
                 </div>
             </div>
             <div class="form-group">
@@ -802,7 +897,7 @@ function openEntityModal() {
                 <div class="form-group">
                     <label>Access Level</label>
                     <select id="entityAccess">
-                        ${[1,2,3,4,5].map(l => `<option value="${l}">Level ${l}</option>`).join('')}
+                        ${[1,2,3,4,5,6,7,8,9,10,11].map(l => `<option value="${l}">Level ${l}</option>`).join('')}
                     </select>
                 </div>
             </div>
@@ -817,7 +912,7 @@ async function saveEntity(event) {
     const data = {
         entity_name: document.getElementById('entityName').value.trim(),
         entity_type: document.getElementById('entityType').value,
-        classification: document.getElementById('entityClassification').value,
+        classification: document.getElementById('entityClassification').value.trim(),
         description: document.getElementById('entityDescription').value.trim(),
         linked_subject_id: parseInt(document.getElementById('entitySubjectId').value) || null,
         linked_case_id: parseInt(document.getElementById('entityCaseId').value) || null,
@@ -844,11 +939,12 @@ async function deleteEntity(id) {
 }
 
 // ============================================================
-// PERSONNEL CRUD
+// PERSONNEL CRUD (super admin only)
 // ============================================================
 let personnelCache = [];
 
 async function loadPersonnel() {
+    if (!isSuperAdmin()) return;
     try {
         const personnelList = await apiRequest('/personnel');
         personnelCache = personnelList;
@@ -869,10 +965,10 @@ async function loadPersonnel() {
         <td><span class="status-badge ${escapeHtml(p.status || 'active')}">${escapeHtml(p.status || 'active')}</span></td>
         <td>${p.created_at ? escapeHtml(new Date(p.created_at).toLocaleDateString()) : '-'}</td>
         <td onclick="event.stopPropagation()">
-            ${p.clearance_level < currentUser.clearance_level ? `
+            ${(p.id === currentUser.id || p.clearance_level < currentUser.clearance_level) ? `
                 <button class="btn-edit" onclick="editPersonnel(${Number(p.id)})">✎</button>
-                <button class="btn-edit" onclick="togglePersonnelStatus(${Number(p.id)})">⚡</button>
-                <button class="btn-danger" onclick="deletePersonnel(${Number(p.id)})">✕</button>
+                ${p.id !== currentUser.id ? `<button class="btn-edit" onclick="togglePersonnelStatus(${Number(p.id)})">⚡</button>
+                <button class="btn-danger" onclick="deletePersonnel(${Number(p.id)})">✕</button>` : ''}
             ` : '<span style="color:var(--terminal-muted); font-size:10px;">🔒 Locked</span>'}
         </td>
     </tr>
@@ -901,17 +997,41 @@ function editPersonnel(id) {
     if (person) openPersonnelModal(person);
 }
 
+// Departments drawn from across the Imperium (and beyond), used both
+// for personnel assignment.
+const DEPARTMENTS = [
+    'Administratum',
+    'Ordo_Hereticus',
+    'Ordo_Malleus',
+    'Ordo_Xenos',
+    'Ordo_Sicarius',
+    'Astra_Militarum',
+    'Adeptus_Astartes',
+    'Adeptus_Mechanicus',
+    'Adeptus_Custodes',
+    'Adeptus_Arbites',
+    'Adeptus_Ministorum',
+    'Navis_Imperialis',
+    'Officio_Assassinorum',
+    'Adeptus_Astra_Telepathica',
+    'Imperial_Navy',
+    'Imperial_Palace',
+    'Inquisitorial_Black_Ships'
+];
+
 function openPersonnelModal(data = null) {
     const isEdit = data !== null;
+    const isSelfEdit = isEdit && data.id === currentUser.id;
     const myClearance = currentUser.clearance_level;
-    const maxSelectable = myClearance - 1; // can't grant equal or higher
+    const maxSelectable = isSelfEdit ? 11 : Math.min(myClearance - 1, 11);
 
     document.getElementById('modalTitle').textContent = isEdit ? '✎ Edit Personnel' : '👤 Create New Personnel';
     document.getElementById('modalBody').innerHTML = `
         <form id="personnelForm" onsubmit="savePersonnel(event, ${isEdit ? Number(data.id) : 'null'})">
             <div class="form-group">
                 <label>Callsign *</label>
-                <input type="text" id="personnelCallsign" value="${isEdit ? escapeHtml(data.callsign) : ''}" ${isEdit ? 'readonly' : 'required'}>
+                <input type="text" id="personnelCallsign" value="${isEdit ? escapeHtml(data.callsign) : ''}" ${isEdit && !isSelfEdit ? 'readonly' : ''} required>
+                ${isEdit && !isSelfEdit ? '<div style="font-size:11px;color:var(--terminal-muted);margin-top:4px;">Only the account owner (God_Emperor) can rename their own callsign.</div>' : ''}
             </div>
             ${!isEdit ? `
             <div class="form-group">
@@ -925,19 +1045,20 @@ function openPersonnelModal(data = null) {
                     <input type="text" id="personnelRank" placeholder="e.g. Inquisitor_Lord" value="${isEdit ? escapeHtml(data.rank || '') : ''}">
                 </div>
                 <div class="form-group">
-                    <label>Clearance Level (max grantable: ${maxSelectable})</label>
-                    <select id="personnelClearance">
+                    <label>Clearance Level (max grantable: ${Math.max(maxSelectable, 1)})</label>
+                    <select id="personnelClearance" ${isSelfEdit ? 'disabled' : ''}>
                         ${Array.from({length: Math.max(maxSelectable, 1)}, (_, i) => i + 1).map(l =>
                             `<option value="${l}" ${isEdit && data.clearance_level === l ? 'selected' : ''}>Level ${l}</option>`
                         ).join('')}
                     </select>
+                    ${isSelfEdit ? '<div style="font-size:11px;color:var(--terminal-muted);margin-top:4px;">Your own clearance stays fixed at 999 (God_Emperor).</div>' : ''}
                 </div>
             </div>
             <div class="form-group">
                 <label>Department</label>
                 <select id="personnelDept">
-                    ${['Administratum','Ordo_Hereticus','Ordo_Malleus','Ordo_Xenos','Astra_Militarum'].map(d =>
-                        `<option value="${d}" ${isEdit && data.department === d ? 'selected' : ''}>${d}</option>`
+                    ${DEPARTMENTS.map(d =>
+                        `<option value="${d}" ${isEdit && data.department === d ? 'selected' : ''}>${d.replace(/_/g, ' ')}</option>`
                     ).join('')}
                 </select>
             </div>
@@ -949,15 +1070,25 @@ function openPersonnelModal(data = null) {
 
 async function savePersonnel(event, id) {
     event.preventDefault();
-    
+
     if (id) {
+        const isSelfEdit = id === currentUser.id;
         const data = {
             rank: document.getElementById('personnelRank').value.trim(),
-            clearance_level: parseInt(document.getElementById('personnelClearance').value),
-            department: document.getElementById('personnelDept').value
+            department: document.getElementById('personnelDept').value,
+            clearance_level: parseInt(document.getElementById('personnelClearance').value) || undefined
         };
+        if (isSelfEdit) {
+            data.callsign = document.getElementById('personnelCallsign').value.trim();
+        }
         try {
-            await apiRequest(`/personnel/${id}`, 'PUT', data);
+            const updated = await apiRequest(`/personnel/${id}`, 'PUT', data);
+            if (isSelfEdit) {
+                // Keep the header + local session in sync with the rename/rank change.
+                currentUser.callsign = updated.callsign;
+                currentUser.rank = updated.rank;
+                document.getElementById('userDisplay').textContent = `${currentUser.rank} ${currentUser.callsign}`;
+            }
             closeModal();
             await loadPersonnel();
             await loadDashboard();
