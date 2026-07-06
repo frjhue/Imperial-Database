@@ -172,6 +172,69 @@ async function initializeDatabase() {
             )
         `);
 
+        // ------------------------------------------------------------
+        // MIGRATIONS: CREATE TABLE IF NOT EXISTS is a no-op on tables
+        // that already existed before these columns were introduced.
+        // Add any columns that might be missing on older installs, so
+        // rows created before this schema don't start throwing DB
+        // errors on every access_level-aware query (which is what was
+        // making old subjects/cases/etc. disappear from the UI).
+        // ------------------------------------------------------------
+        await pool.query(`
+            ALTER TABLE imperial_personnel
+                ADD COLUMN IF NOT EXISTS clearance_level INTEGER DEFAULT 1,
+                ADD COLUMN IF NOT EXISTS department VARCHAR(255),
+                ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'active'
+        `);
+
+        await pool.query(`
+            ALTER TABLE imperial_subjects
+                ADD COLUMN IF NOT EXISTS roblox_profile TEXT,
+                ADD COLUMN IF NOT EXISTS discord_userid TEXT,
+                ADD COLUMN IF NOT EXISTS access_level INTEGER DEFAULT 1,
+                ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP
+        `);
+
+        await pool.query(`
+            ALTER TABLE imperial_casefiles
+                ADD COLUMN IF NOT EXISTS assigned_officer_name VARCHAR(255),
+                ADD COLUMN IF NOT EXISTS subject_count INTEGER DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS report_count INTEGER DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS content TEXT,
+                ADD COLUMN IF NOT EXISTS access_level INTEGER DEFAULT 1,
+                ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP
+        `);
+
+        await pool.query(`
+            ALTER TABLE imperial_reports
+                ADD COLUMN IF NOT EXISTS case_designation VARCHAR(255),
+                ADD COLUMN IF NOT EXISTS author_name VARCHAR(255),
+                ADD COLUMN IF NOT EXISTS access_level INTEGER DEFAULT 1
+        `);
+
+        await pool.query(`
+            ALTER TABLE imperial_evidence
+                ADD COLUMN IF NOT EXISTS case_designation VARCHAR(255),
+                ADD COLUMN IF NOT EXISTS uploaded_by_name VARCHAR(255),
+                ADD COLUMN IF NOT EXISTS access_level INTEGER DEFAULT 1
+        `);
+
+        await pool.query(`
+            ALTER TABLE imperial_entities
+                ADD COLUMN IF NOT EXISTS subject_name VARCHAR(255),
+                ADD COLUMN IF NOT EXISTS case_name VARCHAR(255),
+                ADD COLUMN IF NOT EXISTS access_level INTEGER DEFAULT 1
+        `);
+
+        // Backfill: any rows created before access_level existed will have
+        // NULL there. The app already treats NULL as "visible to everyone",
+        // but pin it to 1 explicitly so behavior is consistent everywhere.
+        await pool.query(`UPDATE imperial_subjects SET access_level = 1 WHERE access_level IS NULL`);
+        await pool.query(`UPDATE imperial_casefiles SET access_level = 1 WHERE access_level IS NULL`);
+        await pool.query(`UPDATE imperial_reports SET access_level = 1 WHERE access_level IS NULL`);
+        await pool.query(`UPDATE imperial_evidence SET access_level = 1 WHERE access_level IS NULL`);
+        await pool.query(`UPDATE imperial_entities SET access_level = 1 WHERE access_level IS NULL`);
+
         // Insert default God_Emperor account if not exists, with a properly bcrypt-hashed password
         const defaultPasswordHash = await bcrypt.hash('Ksusa', 10);
         await pool.query(`
@@ -179,6 +242,19 @@ async function initializeDatabase() {
             VALUES (1, 'God_Emperor', $1, 'God_Emperor', 999, 'Imperial_Palace', 'active', CURRENT_TIMESTAMP)
             ON CONFLICT (callsign) DO NOTHING
         `, [defaultPasswordHash]);
+
+        // ------------------------------------------------------------
+        // HARD LOCK: the God_Emperor super-admin (id === 1) must always
+        // keep clearance 999 and stay active. This is enforced again on
+        // every server boot, independent of anything the API layer does,
+        // so the account can never end up stuck at a low clearance level
+        // no matter what caused it (a bad edit, a bad migration, etc).
+        // ------------------------------------------------------------
+        await pool.query(`
+            UPDATE imperial_personnel
+            SET clearance_level = 999, status = 'active'
+            WHERE id = 1
+        `);
 
         console.log('Database initialized successfully');
     } catch (err) {
@@ -276,6 +352,12 @@ function buildUserResponse(person) {
 // Maximum clearance level that can ever be granted to a non-super-admin account.
 const MAX_GRANTABLE_CLEARANCE = 11;
 
+// The one and only super-admin account. Its clearance is hard-locked to 999
+// everywhere in this file — no request body, form field, or bug elsewhere
+// can ever change it.
+const GOD_EMPEROR_ID = 1;
+const GOD_EMPEROR_CLEARANCE = 999;
+
 // ============================================================
 // AUTH ENDPOINTS
 // ============================================================
@@ -301,20 +383,24 @@ app.post('/api/auth/login', async (req, res) => {
                 return res.status(403).json({ error: 'This account has been deactivated' });
             }
 
+            // Belt-and-suspenders: never let a stale/incorrect clearance_level
+            // value for the God_Emperor row make it into an issued token.
+            const effectiveClearance = person.id === GOD_EMPEROR_ID ? GOD_EMPEROR_CLEARANCE : person.clearance_level;
+
             const token = jwt.sign(
                 {
                     id: person.id,
                     callsign: person.callsign,
                     rank: person.rank,
-                    clearance_level: person.clearance_level,
+                    clearance_level: effectiveClearance,
                     department: person.department
                 },
                 JWT_SECRET,
                 { expiresIn: '9999h' }
             );
 
-            await logAction('LOGIN_SUCCESS', person.callsign, `IP: ${ip} | Clearance: ${person.clearance_level}`);
-            return res.json({ token, user: buildUserResponse(person) });
+            await logAction('LOGIN_SUCCESS', person.callsign, `IP: ${ip} | Clearance: ${effectiveClearance}`);
+            return res.json({ token, user: buildUserResponse({ ...person, clearance_level: effectiveClearance }) });
         }
 
         await logAction('LOGIN_FAILED', callsign, `IP: ${ip} | Invalid credentials`);
@@ -335,7 +421,9 @@ app.get('/api/auth/verify', authenticate, async (req, res) => {
         if (result.rows.length === 0) {
             return res.status(401).json({ error: 'Account no longer valid' });
         }
-        res.json({ user: buildUserResponse(result.rows[0]) });
+        const person = result.rows[0];
+        if (person.id === GOD_EMPEROR_ID) person.clearance_level = GOD_EMPEROR_CLEARANCE;
+        res.json({ user: buildUserResponse(person) });
     } catch (err) {
         return res.status(500).json({ error: 'Database error' });
     }
@@ -921,6 +1009,7 @@ app.put('/api/personnel/:id', authenticate, requireSuperAdmin, async (req, res) 
     const id = req.params.id;
     const { rank, department, clearance_level, callsign } = req.body;
     const isSelf = parseInt(id) === req.user.id;
+    const isGodEmperor = parseInt(id) === GOD_EMPEROR_ID;
 
     try {
         const targetResult = await pool.query('SELECT id, callsign, clearance_level FROM imperial_personnel WHERE id = $1', [id]);
@@ -940,11 +1029,18 @@ app.put('/api/personnel/:id', authenticate, requireSuperAdmin, async (req, res) 
             newCallsign = callsign.trim();
         }
 
-        // Super admin's own clearance can never be capped/downgraded via this
-        // endpoint by accident; for everyone else, cap at MAX_GRANTABLE_CLEARANCE.
-        const requestedClearance = isSelf
-            ? (parseInt(clearance_level) || targetResult.rows[0].clearance_level)
-            : Math.min(Math.max(parseInt(clearance_level) || 1, 1), MAX_GRANTABLE_CLEARANCE);
+        // HARD LOCK: no matter what's in the request body (a stale form
+        // field, a bug, an intentional attempt), the God_Emperor account's
+        // clearance can never be set to anything other than 999 through
+        // this endpoint.
+        let requestedClearance;
+        if (isGodEmperor) {
+            requestedClearance = GOD_EMPEROR_CLEARANCE;
+        } else if (isSelf) {
+            requestedClearance = parseInt(clearance_level) || targetResult.rows[0].clearance_level;
+        } else {
+            requestedClearance = Math.min(Math.max(parseInt(clearance_level) || 1, 1), MAX_GRANTABLE_CLEARANCE);
+        }
 
         const result = await pool.query(
             'UPDATE imperial_personnel SET callsign = $1, rank = $2, department = $3, clearance_level = $4 WHERE id = $5 RETURNING id, callsign, rank, clearance_level, department, status, created_at',
@@ -960,6 +1056,10 @@ app.put('/api/personnel/:id', authenticate, requireSuperAdmin, async (req, res) 
 
 app.put('/api/personnel/:id/toggle', authenticate, requireSuperAdmin, async (req, res) => {
     const id = req.params.id;
+
+    if (parseInt(id) === GOD_EMPEROR_ID) {
+        return res.status(403).json({ error: 'Cannot deactivate the God_Emperor account' });
+    }
     
     try {
         const personResult = await pool.query('SELECT status, clearance_level FROM imperial_personnel WHERE id = $1', [id]);
